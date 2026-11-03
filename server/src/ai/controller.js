@@ -17,6 +17,13 @@ const SYSTEM_PROMPT = `Ти — AI-контролер товарного кат�
 Формат відповіді:
 {"items":[{"index":0,"title_uk":"...","short_description_uk":"...","category":"..."}]}`;
 
+const STRICT_NOTE = `
+УВАГА: у попередній відповіді назва залишилася російською.
+Переклади її ПОВНІСТЮ українською, зберігши бренд, модель і цифри латиницею.
+Не залишай жодного російського слова (ы, э, ъ, ё, "для", "с", "и" тощо).`;
+
+const RUSSIAN_MARKERS = /[ыэъё]/i;
+
 function buildUserPrompt(items) {
   const compact = items.map((item, index) => ({
     index,
@@ -104,9 +111,9 @@ export class AIController {
     }
   }
 
-  async requestModel(batch) {
+  async requestModel(batch, { strict = false } = {}) {
     const response = await this.client.completeJSON({
-      system: SYSTEM_PROMPT,
+      system: strict ? `${SYSTEM_PROMPT}\n${STRICT_NOTE}` : SYSTEM_PROMPT,
       user: buildUserPrompt(batch),
       maxTokens: Math.min(4000, 300 * batch.length + 400),
     });
@@ -236,6 +243,44 @@ export class AIController {
       this.writeCache(cacheWrites);
     });
 
+    await this.repairUntranslated(results, { marginPercent });
     return [...results.values()];
+  }
+
+  /**
+   * Second pass for titles the model returned in Russian.
+   * Cheap (a handful of items) and keeps the storefront fully Ukrainian.
+   */
+  async repairUntranslated(results, { marginPercent }) {
+    if (!this.enabled) return;
+
+    const flagged = [...results.values()].filter(
+      (entry) => entry.ok && entry.record && RUSSIAN_MARKERS.test(entry.record.title),
+    );
+    if (flagged.length === 0) return;
+
+    this.logger.info('retrying untranslated titles', { count: flagged.length });
+
+    for (const batch of chunk(flagged, Math.min(this.config.ai.batchSize, 6))) {
+      let byIndex = null;
+      try {
+        byIndex = await this.requestModel(batch.map((entry) => entry.raw), { strict: true });
+      } catch (error) {
+        this.logger.warn('strict translation retry failed', { error: error.message });
+        return;
+      }
+      if (!byIndex) continue;
+
+      const cacheWrites = new Map();
+      batch.forEach((entry, index) => {
+        const aiResult = byIndex.get(index);
+        if (!aiResult) return;
+        const ai = this.normalizeAiResult(aiResult, entry.raw);
+        if (RUSSIAN_MARKERS.test(ai.title)) return;
+        entry.record = this.buildRecord(entry.raw, ai, marginPercent);
+        cacheWrites.set(this.cacheKey(entry.raw), ai);
+      });
+      this.writeCache(cacheWrites);
+    }
   }
 }
