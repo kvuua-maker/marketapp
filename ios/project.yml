@@ -30,7 +30,7 @@ targets:
         com.apple.developer.applesignin: [Default]
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.marketapp.store
+        PRODUCT_BUNDLE_IDENTIFIER: com.kvuua.marketapp
         PRODUCT_NAME: MarketApp
         TARGETED_DEVICE_FAMILY: "1,2"
         GENERATE_INFOPLIST_FILE: NO

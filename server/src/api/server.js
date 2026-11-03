@@ -677,7 +677,7 @@ export function createAppServer({ db, adapters, ai, config, logger, syncTrigger 
         const identityToken = String(body?.identityToken ?? '');
         if (!identityToken) throw new ValidationError('Потрібен identityToken', [{ field: 'identityToken' }]);
 
-        const payload = await verifyAppleIdentityToken(identityToken, config.appleClientId);
+        const payload = await verifyAppleIdentityToken(identityToken, config.appleClientIds, logger);
         const appleSub = String(payload.sub);
         const now = new Date().toISOString();
         const fullName = String(body?.fullName ?? '').trim().slice(0, 80);

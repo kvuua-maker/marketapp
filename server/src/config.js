@@ -117,8 +117,13 @@ export const config = {
   // Bearer token that protects the analytics summary.
   adminToken: process.env.ADMIN_TOKEN ?? '',
 
-  // Sign in with Apple: the identity token audience (the iOS bundle id).
-  appleClientId: process.env.APPLE_CLIENT_ID ?? 'com.marketapp.store',
+  // Sign in with Apple: the identity token audience is the iOS bundle id.
+  // A comma-separated list keeps TestFlight (com.kvuua.marketapp) and
+  // simulator builds working at the same time.
+  appleClientIds: (process.env.APPLE_CLIENT_ID ?? 'com.kvuua.marketapp')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean),
 };
 
 export function supplierMargin(supplierId) {
