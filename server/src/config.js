@@ -41,6 +41,7 @@ export const config = {
     pageSize: int(process.env.SYNC_PAGE_SIZE, 100),
     maxProductsPerSupplier: int(process.env.MAX_PRODUCTS_PER_SYNC, 8000),
     requestConcurrency: int(process.env.SYNC_REQUEST_CONCURRENCY, 3),
+    batchSize: int(process.env.SYNC_BATCH_SIZE, 96),
     staleAfterMinutes: int(process.env.SYNC_STALE_AFTER_MINUTES, 180),
   },
 

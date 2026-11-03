@@ -23,6 +23,11 @@ async function main() {
 
   seedSuppliers(db, adapters);
 
+  // A previous process may have died mid-sync; do not leave a stuck "running" row.
+  db.prepare("UPDATE sync_runs SET status = 'interrupted', finished_at = ? WHERE status = 'running'").run(
+    new Date().toISOString(),
+  );
+
   const client = new DeepSeekClient({
     apiKey: config.ai.apiKey,
     baseUrl: config.ai.baseUrl,

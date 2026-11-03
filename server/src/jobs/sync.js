@@ -1,6 +1,6 @@
 import { transaction, run, get, setSetting } from '../db/database.js';
 
-const BATCH_SIZE = 24;
+const DEFAULT_BATCH_SIZE = 96;
 
 function upsertProduct(db, record, contentHashValue) {
   const now = new Date().toISOString();
@@ -83,6 +83,9 @@ function recordRejection(db, supplierId, result) {
  * Returns counters for the sync_runs table.
  */
 export async function runSupplierSync({ db, adapter, ai, config, marginPercent, logger }) {
+  // Larger flushes keep the AI worker pool saturated instead of waiting
+  // for one small batch at a time.
+  const batchSize = config.sync.batchSize ?? DEFAULT_BATCH_SIZE;
   const startedAt = new Date().toISOString();
   const runId = run(
     db,
@@ -122,7 +125,7 @@ export async function runSupplierSync({ db, adapter, ai, config, marginPercent, 
       raw.contentHash = ai.cacheKey ? ai.cacheKey(raw) : '';
       counters.fetched += 1;
       batch.push(raw);
-      if (batch.length >= BATCH_SIZE) await flush();
+      if (batch.length >= batchSize) await flush();
     }
     await flush();
 

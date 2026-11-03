@@ -1,0 +1,377 @@
+name: TestFlight
+
+# Dynamic signing: the distribution certificate and the App Store profile are
+# created through the App Store Connect API on every run. No BUILD_CERTIFICATE_BASE64
+# and no PROVISIONING_PROFILE_BASE64 secrets are required.
+#
+# Required repository secrets:
+#   APP_STORE_CONNECT_KEY_ID / APP_STORE_CONNECT_ISSUER_ID / APP_STORE_CONNECT_KEY
+#   APPLE_TEAM_ID / APP_BUNDLE_ID
+# Legacy names ASC_KEY_ID / ASC_ISSUER_ID / ASC_PRIVATE_KEY are also accepted.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: testflight-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  archive-and-upload:
+    name: Archive and upload to TestFlight
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      API: https://api.appstoreconnect.apple.com/v1
+      TEAM_ID: ${{ secrets.APPLE_TEAM_ID || secrets.ASC_TEAM_ID }}
+      APP_BUNDLE: ${{ secrets.APP_BUNDLE_ID }}
+      APP_NAME: MarketApp
+      APP_PROFILE: MarketApp AppStore
+      DIST_CERT_NAME: MarketApp Distribution
+      ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID || secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID || secrets.ASC_ISSUER_ID }}
+      ASC_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_KEY || secrets.ASC_PRIVATE_KEY }}
+      BUILD_NUMBER: ${{ github.run_number }}
+      MARKETING_VERSION: 1.0.0
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check App Store Connect secrets
+        run: |
+          set -euo pipefail
+          MISSING=0
+          [ -z "${ASC_KEY_ID:-}" ] && { echo "::error::APP_STORE_CONNECT_KEY_ID is missing"; MISSING=1; }
+          [ -z "${ASC_ISSUER_ID:-}" ] && { echo "::error::APP_STORE_CONNECT_ISSUER_ID is missing"; MISSING=1; }
+          [ -z "${ASC_PRIVATE_KEY:-}" ] && { echo "::error::APP_STORE_CONNECT_KEY (.p8) is missing"; MISSING=1; }
+          [ -z "${TEAM_ID:-}" ] && { echo "::error::APPLE_TEAM_ID is missing"; MISSING=1; }
+          [ -z "${APP_BUNDLE:-}" ] && { echo "::error::APP_BUNDLE_ID is missing"; MISSING=1; }
+          if [ "$MISSING" = "1" ]; then exit 1; fi
+          echo "Secrets OK: key ${#ASC_KEY_ID} chars, issuer ${#ASC_ISSUER_ID} chars, team $TEAM_ID, bundle $APP_BUNDLE"
+
+      - name: Select the newest Xcode
+        run: |
+          set -euo pipefail
+          LATEST=$(ls -d /Applications/Xcode*.app | sort -V | tail -1)
+          sudo xcode-select -s "$LATEST"
+          xcodebuild -version
+
+      - name: Install App Store Connect key
+        run: |
+          set -euo pipefail
+          KEY="$RUNNER_TEMP/private_keys/AuthKey_$ASC_KEY_ID.p8"
+          mkdir -p "$RUNNER_TEMP/private_keys" "$HOME/.appstoreconnect/private_keys"
+          printf '%s' "$ASC_PRIVATE_KEY" | tr -d '\r' > "$KEY"
+          chmod 600 "$KEY"
+          cp "$KEY" "$HOME/.appstoreconnect/private_keys/"
+          openssl pkey -in "$KEY" -noout
+          echo "ASC_KEY_PATH=$KEY" >> "$GITHUB_ENV"
+
+      - name: Mint API token
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/jwt.js" <<'JS'
+          const fs = require('fs'), crypto = require('crypto');
+          const key = fs.readFileSync(process.env.ASC_KEY_PATH, 'utf8');
+          const b64 = o => Buffer.from(JSON.stringify(o)).toString('base64url');
+          const now = Math.floor(Date.now() / 1000);
+          const input = b64({ alg: 'ES256', kid: process.env.ASC_KEY_ID, typ: 'JWT' }) + '.' +
+                        b64({ iss: process.env.ASC_ISSUER_ID, iat: now, exp: now + 900, aud: 'appstoreconnect-v1' });
+          const sig = crypto.sign('sha256', Buffer.from(input), { key, dsaEncoding: 'ieee-p1363' }).toString('base64url');
+          process.stdout.write(input + '.' + sig);
+          JS
+          TOKEN=$(node "$RUNNER_TEMP/jwt.js")
+          test -n "$TOKEN"
+          echo "ASC_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+
+      - name: Verify API access
+        run: |
+          set -euo pipefail
+          CODE=$(curl -s -o "$RUNNER_TEMP/certs-probe.json" -w '%{http_code}' \
+            -H "Authorization: Bearer $ASC_TOKEN" "$API/certificates?limit=1")
+          echo "GET /certificates -> HTTP $CODE"
+          if [ "$CODE" != "200" ]; then
+            cat "$RUNNER_TEMP/certs-probe.json"
+            echo "::error::App Store Connect rejected the API key (role must be App Manager or Admin)"
+            exit 1
+          fi
+
+      - name: Ensure the app record exists
+        run: |
+          set -euo pipefail
+          CODE=$(curl -s -o "$RUNNER_TEMP/apps.json" -w '%{http_code}' \
+            -H "Authorization: Bearer $ASC_TOKEN" "$API/apps?filter%5BbundleId%5D=$APP_BUNDLE&limit=10")
+          COUNT=$(node -e 'const d=require(process.env.RUNNER_TEMP+"/apps.json");process.stdout.write(String((d.data||[]).length))')
+          echo "App Store Connect records for $APP_BUNDLE: $COUNT"
+          if [ "$COUNT" = "0" ]; then
+            echo "::warning::No app record for $APP_BUNDLE. The upload will fail until the app is created in App Store Connect."
+          fi
+
+      - name: Create signing identity through the API
+        run: |
+          set -euo pipefail
+          api() { curl -s -o "$2" -w '%{http_code}' -H "Authorization: Bearer $ASC_TOKEN" "$1"; }
+
+          list_certs() {
+            api "$API/certificates?filter%5BcertificateType%5D=DISTRIBUTION&limit=200" "$RUNNER_TEMP/certs.json" >/dev/null
+            node -e '
+              const fs = require("fs");
+              const d = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + "/certs.json", "utf8"));
+              const rows = (d.data || []).map(c => ({ id: c.id, name: c.attributes.displayName, expires: c.attributes.expirationDate }));
+              console.log("existing DISTRIBUTION certificates: " + rows.length);
+              rows.forEach(r => console.log("  " + r.id + " | " + r.name + " | expires " + r.expires));
+              fs.writeFileSync(process.env.RUNNER_TEMP + "/cert-ids.txt", rows.map(r => r.id).join("\n"));
+            '
+          }
+
+          create_certificate() {
+            openssl genrsa -out "$RUNNER_TEMP/dist.key" 2048 2>/dev/null
+            openssl req -new -key "$RUNNER_TEMP/dist.key" -out "$RUNNER_TEMP/dist.csr" \
+              -subj "/CN=$DIST_CERT_NAME/O=MarketApp/C=UA"
+            openssl req -in "$RUNNER_TEMP/dist.csr" -outform DER -out "$RUNNER_TEMP/dist.der"
+            CSR=$(openssl base64 -A -in "$RUNNER_TEMP/dist.der")
+            printf '{"data":{"type":"certificates","attributes":{"certificateType":"DISTRIBUTION","csrContent":"%s"}}}' "$CSR" > "$RUNNER_TEMP/cert-req.json"
+            curl -s -o "$RUNNER_TEMP/cert-resp.json" -w '%{http_code}' -X POST \
+              -H "Authorization: Bearer $ASC_TOKEN" -H 'Content-Type: application/json' \
+              --data @"$RUNNER_TEMP/cert-req.json" "$API/certificates"
+          }
+
+          list_certs
+          CODE=$(create_certificate)
+          echo "POST /certificates -> HTTP $CODE"
+
+          if [ "$CODE" = "409" ]; then
+            echo "Team already holds the maximum number of Distribution certificates."
+            echo "Revoking the listed ones (they are recreated automatically by every pipeline run)."
+            while read -r ID; do
+              [ -z "$ID" ] && continue
+              RC=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE \
+                -H "Authorization: Bearer $ASC_TOKEN" "$API/certificates/$ID")
+              echo "  revoke $ID -> HTTP $RC"
+            done < "$RUNNER_TEMP/cert-ids.txt"
+            CODE=$(create_certificate)
+            echo "POST /certificates (retry) -> HTTP $CODE"
+          fi
+
+          if [ "$CODE" != "201" ]; then
+            echo "--- Apple response ---"
+            cat "$RUNNER_TEMP/cert-resp.json"
+            echo "::error::Could not create a Distribution certificate (HTTP $CODE)"
+            exit 1
+          fi
+
+          node -e '
+            const fs = require("fs");
+            const d = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + "/cert-resp.json", "utf8"));
+            fs.writeFileSync(process.env.RUNNER_TEMP + "/dist.cer", Buffer.from(d.data.attributes.certificateContent, "base64"));
+            fs.writeFileSync(process.env.RUNNER_TEMP + "/cert-id.txt", d.data.id);
+          '
+          echo "CERT_ID=$(cat "$RUNNER_TEMP/cert-id.txt")" >> "$GITHUB_ENV"
+
+          openssl x509 -inform DER -in "$RUNNER_TEMP/dist.cer" -out "$RUNNER_TEMP/dist.pem"
+          security create-keychain -p ma-ci-temp ma-sign.keychain || true
+          security set-keychain-settings -lut 3600 ma-sign.keychain
+          security unlock-keychain -p ma-ci-temp ma-sign.keychain
+          security import "$RUNNER_TEMP/dist.key" -k ma-sign.keychain -T /usr/bin/codesign
+          security import "$RUNNER_TEMP/dist.pem" -k ma-sign.keychain -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k ma-ci-temp ma-sign.keychain >/dev/null
+          security list-keychains -d user -s ma-sign.keychain $(security list-keychains -d user | tr -d '"')
+          security find-identity -v -p codesigning ma-sign.keychain
+
+      - name: Ensure the bundle id exists
+        run: |
+          set -euo pipefail
+          curl -s -o "$RUNNER_TEMP/bundles.json" -H "Authorization: Bearer $ASC_TOKEN" "$API/bundleIds?limit=200"
+          export APP_IDENT="$APP_BUNDLE"
+          EXISTS=$(node -e '
+            const fs = require("fs");
+            const d = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + "/bundles.json", "utf8"));
+            process.stdout.write((d.data || []).some(x => x.attributes.identifier === process.env.APP_IDENT) ? "yes" : "no");
+          ')
+          echo "bundle id $APP_BUNDLE exists: $EXISTS"
+          if [ "$EXISTS" = "no" ]; then
+            printf '{"data":{"type":"bundleIds","attributes":{"identifier":"%s","name":"%s","platform":"IOS"}}}' "$APP_BUNDLE" "$APP_NAME" > "$RUNNER_TEMP/bid.json"
+            CODE=$(curl -s -o "$RUNNER_TEMP/bid-resp.json" -w '%{http_code}' -X POST \
+              -H "Authorization: Bearer $ASC_TOKEN" -H 'Content-Type: application/json' \
+              --data @"$RUNNER_TEMP/bid.json" "$API/bundleIds")
+            echo "create bundle id -> HTTP $CODE"
+            [ "$CODE" = "201" ] || { cat "$RUNNER_TEMP/bid-resp.json"; exit 1; }
+          fi
+
+      - name: Create the App Store provisioning profile
+        run: |
+          set -euo pipefail
+          curl -s -o "$RUNNER_TEMP/bundles.json" -H "Authorization: Bearer $ASC_TOKEN" "$API/bundleIds?limit=200"
+          export IDENT="$APP_BUNDLE"
+          BID=$(node -e '
+            const fs = require("fs");
+            const d = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + "/bundles.json", "utf8"));
+            const b = (d.data || []).find(x => x.attributes.identifier === process.env.IDENT);
+            if (!b) { console.error("bundle not found " + process.env.IDENT); process.exit(4); }
+            process.stdout.write(b.id);
+          ')
+          echo "bundle resource: $BID"
+
+          curl -s -o "$RUNNER_TEMP/p.json" -H "Authorization: Bearer $ASC_TOKEN" "$API/profiles?limit=200"
+          export PROFILE_NAME="$APP_PROFILE"
+          OLD=$(node -e '
+            const fs = require("fs");
+            const d = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + "/p.json", "utf8"));
+            const p = (d.data || []).find(x => x.attributes.name === process.env.PROFILE_NAME);
+            if (p) process.stdout.write(p.id);
+          ')
+          if [ -n "$OLD" ]; then
+            curl -s -o /dev/null -w "delete old profile -> %{http_code}\n" \
+              -X DELETE -H "Authorization: Bearer $ASC_TOKEN" "$API/profiles/$OLD"
+          fi
+
+          printf '{"data":{"type":"profiles","attributes":{"name":"%s","profileType":"IOS_APP_STORE"},"relationships":{"bundleId":{"data":{"type":"bundleIds","id":"%s"}},"certificates":{"data":[{"type":"certificates","id":"%s"}]}}}}' \
+            "$APP_PROFILE" "$BID" "$CERT_ID" > "$RUNNER_TEMP/req.json"
+          CODE=$(curl -s -o "$RUNNER_TEMP/resp.json" -w '%{http_code}' -X POST \
+            -H "Authorization: Bearer $ASC_TOKEN" -H 'Content-Type: application/json' \
+            --data @"$RUNNER_TEMP/req.json" "$API/profiles")
+          echo "create profile -> HTTP $CODE"
+          [ "$CODE" = "201" ] || { cat "$RUNNER_TEMP/resp.json"; exit 1; }
+
+      - name: Install the provisioning profile
+        run: |
+          set -euo pipefail
+          curl -s -o "$RUNNER_TEMP/profiles.json" -H "Authorization: Bearer $ASC_TOKEN" "$API/profiles?limit=200"
+          export PROFILE_NAME="$APP_PROFILE"
+          PID=$(node -e '
+            const fs = require("fs");
+            const d = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + "/profiles.json", "utf8"));
+            const p = (d.data || []).find(x => x.attributes.name === process.env.PROFILE_NAME);
+            if (!p) { console.error("profile not found"); process.exit(4); }
+            process.stdout.write(p.id);
+          ')
+          curl -s -o "$RUNNER_TEMP/profile.json" -H "Authorization: Bearer $ASC_TOKEN" "$API/profiles/$PID"
+          DEST="$HOME/Library/MobileDevice/Provisioning Profiles/$APP_PROFILE.mobileprovision"
+          mkdir -p "$(dirname "$DEST")"
+          DEST="$DEST" node -e '
+            const fs = require("fs");
+            const d = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + "/profile.json", "utf8"));
+            fs.writeFileSync(process.env.DEST, Buffer.from(d.data.attributes.profileContent, "base64"));
+          '
+          ls -l "$DEST"
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate the project
+        working-directory: ios
+        run: |
+          set -euo pipefail
+          xcodegen generate
+          ls -d MarketApp.xcodeproj
+
+      - name: Archive (unsigned)
+        working-directory: ios
+        run: |
+          set -euo pipefail
+          xcodebuild archive \
+            -project MarketApp.xcodeproj \
+            -scheme MarketApp \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/MarketApp.xcarchive" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
+            CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+            MARKETING_VERSION="$MARKETING_VERSION" 2>&1 | tail -n 25
+
+      - name: Verify the archive
+        run: |
+          set -euo pipefail
+          APP="$RUNNER_TEMP/MarketApp.xcarchive/Products/Applications/MarketApp.app"
+          test -d "$APP"
+          BUNDLE=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$APP/Info.plist")
+          BUILD=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$APP/Info.plist")
+          VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP/Info.plist")
+          echo "bundle=$BUNDLE version=$VERSION build=$BUILD"
+          test "$BUNDLE" = "$APP_BUNDLE" || { echo "::error::Unexpected bundle id $BUNDLE"; exit 1; }
+          test -n "$BUILD" || { echo "::error::Empty CFBundleVersion"; exit 1; }
+
+      - name: Sign the app and package the IPA
+        run: |
+          set -euo pipefail
+          security list-keychains -d user -s ma-sign.keychain login.keychain-db || true
+          security unlock-keychain -p ma-ci-temp ma-sign.keychain || true
+          security find-identity -v -p codesigning
+
+          curl -s -o "$RUNNER_TEMP/profiles.json" -H "Authorization: Bearer $ASC_TOKEN" "$API/profiles?limit=200"
+          export PROFILE_NAME="$APP_PROFILE"
+          node -e '
+            const fs = require("fs");
+            const d = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + "/profiles.json", "utf8"));
+            const p = (d.data || []).find(x => x.attributes.name === process.env.PROFILE_NAME);
+            if (!p) { console.error("profile not found"); process.exit(4); }
+            fs.writeFileSync(process.env.RUNNER_TEMP + "/app.mobileprovision", Buffer.from(p.attributes.profileContent, "base64"));
+          '
+
+          APP="$RUNNER_TEMP/MarketApp.xcarchive/Products/Applications/MarketApp.app"
+          cp "$RUNNER_TEMP/app.mobileprovision" "$APP/embedded.mobileprovision"
+          security cms -D -i "$RUNNER_TEMP/app.mobileprovision" > "$RUNNER_TEMP/profile.plist"
+          /usr/libexec/PlistBuddy -x -c 'Print :Entitlements' "$RUNNER_TEMP/profile.plist" > "$RUNNER_TEMP/entitlements.plist"
+          codesign --force --sign "Apple Distribution" --timestamp=none \
+            --entitlements "$RUNNER_TEMP/entitlements.plist" --generate-entitlement-der "$APP"
+          codesign --verify --verbose "$APP"
+
+          mkdir -p "$RUNNER_TEMP/export/Payload"
+          cp -R "$APP" "$RUNNER_TEMP/export/Payload/"
+          IPA="$RUNNER_TEMP/export/MarketApp.ipa"
+          ( cd "$RUNNER_TEMP/export" && ditto -c -k --sequesterRsrc --keepParent Payload "$IPA" )
+          unzip -l "$IPA" | head -5
+          ls -l "$IPA"
+
+      - name: Upload to TestFlight
+        run: |
+          set -euo pipefail
+          IPA="$RUNNER_TEMP/export/MarketApp.ipa"
+          test -f "$IPA"
+          set +e
+          xcrun altool --upload-app -f "$IPA" -t ios \
+            --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID" 2>&1 | tee "$RUNNER_TEMP/upload.log"
+          RC=${PIPESTATUS[0]}
+          set -e
+          if [ "$RC" != "0" ]; then
+            echo "::error::Upload failed with exit code $RC"
+            exit "$RC"
+          fi
+          echo "::notice title=Uploaded::Build $BUILD_NUMBER ($MARKETING_VERSION) sent to TestFlight"
+
+      - name: Verify the build is processing in App Store Connect
+        run: |
+          set -euo pipefail
+          curl -s -o "$RUNNER_TEMP/apps2.json" -H "Authorization: Bearer $ASC_TOKEN" \
+            "$API/apps?filter%5BbundleId%5D=$APP_BUNDLE&limit=10"
+          APP_ID=$(node -e '
+            const fs = require("fs");
+            const d = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + "/apps2.json", "utf8"));
+            const a = (d.data || [])[0];
+            if (!a) process.exit(4);
+            process.stdout.write(a.id);
+          ')
+          for attempt in $(seq 1 12); do
+            sleep 20
+            curl -s -o "$RUNNER_TEMP/builds.json" -H "Authorization: Bearer $ASC_TOKEN" \
+              "$API/builds?filter%5Bapp%5D=$APP_ID&limit=10&sort=-uploadedDate"
+            STATE=$(node -e '
+              const fs = require("fs");
+              const d = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + "/builds.json", "utf8"));
+              const b = (d.data || []).find(x => x.attributes.version === process.env.BUILD_NUMBER);
+              process.stdout.write(b ? (b.attributes.processingState || "UNKNOWN") : "NOT_FOUND");
+            ')
+            echo "attempt $attempt: build $BUILD_NUMBER -> $STATE"
+            case "$STATE" in
+              VALID|PROCESSING) echo "::notice title=TestFlight::Build $BUILD_NUMBER is $STATE in App Store Connect"; exit 0;;
+              FAILED|INVALID) echo "::error::Build processing failed: $STATE"; exit 1;;
+            esac
+          done
+          echo "::warning::Build uploaded, but App Store Connect has not reported it yet (processing can take 10-30 minutes)."
