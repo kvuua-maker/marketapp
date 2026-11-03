@@ -30,6 +30,7 @@ struct ImageGalleryView: View {
             } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 16, weight: .bold))
+                    .accessibilityLabel("Закрити")
                     .foregroundStyle(.white)
                     .padding(12)
                     .background(.black.opacity(0.55), in: Circle())

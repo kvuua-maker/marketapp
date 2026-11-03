@@ -30,21 +30,32 @@ final class ImageCache {
 
     func image(for url: URL) async throws -> UIImage {
         if let cached = cached(url) { return cached }
-        let (data, _) = try await session.data(from: url)
+        var request = URLRequest(url: url)
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        let (data, _) = try await session.data(for: request)
         guard let image = UIImage(data: data) else {
             throw APIError(message: "Пошкоджене зображення")
         }
         memory.setObject(image, forKey: url as NSURL, cost: data.count)
         return image
     }
+
+    /// Drops both cache levels so the next attempt really re-downloads.
+    func evict(_ url: URL) {
+        memory.removeObject(forKey: url as NSURL)
+        session.configuration.urlCache?.removeCachedResponse(for: URLRequest(url: url))
+    }
 }
 
-/// AsyncImage replacement with memory + disk caching and a lightweight placeholder.
+/// AsyncImage replacement with memory + disk caching, one automatic retry and
+/// a manual "Повторити" button when the supplier photo is unavailable.
 struct CachedAsyncImage: View {
     let url: URL?
     var contentMode: ContentMode = .fill
 
     @State private var image: UIImage?
+    @State private var failed = false
+    @State private var attempt = 0
 
     var body: some View {
         ZStack {
@@ -53,6 +64,26 @@ struct CachedAsyncImage: View {
                     .resizable()
                     .aspectRatio(contentMode: contentMode)
                     .transition(.opacity)
+            } else if failed {
+                Rectangle()
+                    .fill(Color(.secondarySystemBackground))
+                    .overlay {
+                        Button {
+                            attempt += 1
+                        } label: {
+                            VStack(spacing: 4) {
+                                Image(systemName: "arrow.clockwise")
+                                    .font(.caption.weight(.semibold))
+                                Text("Повторити")
+                                    .font(.caption2)
+                            }
+                            .foregroundStyle(.secondary)
+                            .padding(6)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Повторити завантаження фото")
+                    }
             } else {
                 Rectangle()
                     .fill(Color(.secondarySystemBackground))
@@ -62,16 +93,34 @@ struct CachedAsyncImage: View {
             }
         }
         .animation(.easeInOut(duration: 0.18), value: image != nil)
-        .task(id: url) { await load() }
+        .task(id: "\(url?.absoluteString ?? "none")#\(attempt)") { await load() }
     }
 
     @MainActor
     private func load() async {
-        guard let url else { return }
+        guard let url else {
+            failed = true
+            return
+        }
+        failed = false
+
         if let cached = ImageCache.shared.cached(url) {
             image = cached
             return
         }
-        image = try? await ImageCache.shared.image(for: url)
+
+        do {
+            image = try await ImageCache.shared.image(for: url)
+        } catch {
+            // One silent retry, then let the customer press "Повторити".
+            if attempt < 1 {
+                try? await Task.sleep(nanoseconds: 700_000_000)
+                guard !Task.isCancelled else { return }
+                attempt += 1
+            } else {
+                ImageCache.shared.evict(url)
+                failed = true
+            }
+        }
     }
 }

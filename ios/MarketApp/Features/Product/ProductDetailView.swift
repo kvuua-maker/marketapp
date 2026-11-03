@@ -272,6 +272,7 @@ struct ProductDetailView: View {
                 favorites.toggle(product.id)
             } label: {
                 Image(systemName: favorites.contains(product.id) ? "heart.fill" : "heart")
+                    .accessibilityLabel(favorites.contains(product.id) ? "Прибрати з обраного" : "Додати в обране")
                     .font(.system(size: 18, weight: .semibold))
                     .foregroundStyle(favorites.contains(product.id) ? .red : .primary)
                     .frame(width: 48, height: 48)

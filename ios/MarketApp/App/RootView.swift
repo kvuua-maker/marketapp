@@ -77,6 +77,8 @@ struct SplitRootView: View {
     @EnvironmentObject private var cart: CartStore
     @EnvironmentObject private var router: AppRouter
 
+    @State private var detailPath = NavigationPath()
+
     var body: some View {
         NavigationSplitView {
             List {
@@ -120,7 +122,7 @@ struct SplitRootView: View {
             .navigationTitle("MarketApp")
             .navigationSplitViewColumnWidth(min: 240, ideal: 300, max: 360)
         } detail: {
-            NavigationStack {
+            NavigationStack(path: $detailPath) {
                 Group {
                     switch router.sidebar ?? .all {
                     case .cart:
@@ -137,6 +139,11 @@ struct SplitRootView: View {
             }
         }
         .navigationSplitViewStyle(.balanced)
+        // Tapping a category / cart / profile must land on the root screen,
+        // never on top of a product card that is still pushed.
+        .onChange(of: router.sidebar) { _, _ in
+            detailPath = NavigationPath()
+        }
         .task { await catalog.loadShell() }
     }
 
@@ -188,9 +195,13 @@ struct TabRootView: View {
     @EnvironmentObject private var favorites: FavoritesStore
     @EnvironmentObject private var router: AppRouter
 
+    @State private var catalogPath = NavigationPath()
+    @State private var cartPath = NavigationPath()
+    @State private var profilePath = NavigationPath()
+
     var body: some View {
         TabView(selection: $router.tab) {
-            NavigationStack {
+            NavigationStack(path: $catalogPath) {
                 CatalogView()
                     .navigationDestination(for: Product.self) { product in
                         ProductDetailView(product: product)
@@ -199,14 +210,14 @@ struct TabRootView: View {
             .tabItem { Label("Каталог", systemImage: "square.grid.2x2") }
             .tag(AppRouter.Tab.catalog)
 
-            NavigationStack {
+            NavigationStack(path: $cartPath) {
                 CartView()
             }
             .tabItem { Label("Кошик", systemImage: "cart") }
             .badge(cart.count)
             .tag(AppRouter.Tab.cart)
 
-            NavigationStack {
+            NavigationStack(path: $profilePath) {
                 ProfileView()
                     .navigationDestination(for: Product.self) { product in
                         ProductDetailView(product: product)
@@ -215,6 +226,11 @@ struct TabRootView: View {
             .tabItem { Label("Профіль", systemImage: "person.crop.circle") }
             .badge(favorites.count)
             .tag(AppRouter.Tab.profile)
+        }
+        .onChange(of: router.tab) { _, _ in
+            catalogPath = NavigationPath()
+            cartPath = NavigationPath()
+            profilePath = NavigationPath()
         }
     }
 }

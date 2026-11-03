@@ -151,6 +151,7 @@ struct ProductTile: View {
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(favorites.contains(product.id) ? "Прибрати з обраного" : "Додати в обране")
     }
 }
 

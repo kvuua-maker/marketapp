@@ -84,131 +84,165 @@ struct CheckoutView: View {
     // MARK: - Form
 
     private var form: some View {
-        Form {
-            Section {
-                field(title: "Прізвище та імʼя", text: $customer.fullName, hint: "Іван Петренко", error: nameError)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    TextField("+380 XX XXX XX XX", text: $customer.phone)
-                        .keyboardType(.phonePad)
-                        .textContentType(.telephoneNumber)
-                        .onChange(of: customer.phone) { _, value in
-                            let formatted = Self.formatPhone(value)
-                            if formatted != value { customer.phone = formatted }
+        ScrollViewReader { proxy in
+            Form {
+                Section {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Прізвище та імʼя")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        TextField("Іван Петренко", text: $customer.fullName)
+                            .textContentType(.name)
+                            .textInputAutocapitalization(.words)
+                            .textFieldStyle(.roundedBorder)
+                        if showValidation, let nameError {
+                            errorText(nameError)
                         }
-                    if showValidation, let phoneError {
-                        Text(phoneError).font(.caption2).foregroundStyle(.red)
                     }
-                }
-            } header: {
-                Text("Отримувач")
-            }
+                    .id("name")
 
-            Section {
-                Button {
-                    showCityPicker = true
-                } label: {
-                    HStack {
-                        Text("Місто").foregroundStyle(.primary)
-                        Spacer()
-                        Text(selectedCity.isEmpty ? "Оберіть" : selectedCity)
-                            .foregroundStyle(selectedCity.isEmpty ? .secondary : .primary)
-                        Image(systemName: "chevron.right")
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Телефон")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                        TextField("+380 XX XXX XX XX", text: $customer.phone)
+                            .keyboardType(.phonePad)
+                            .textContentType(.telephoneNumber)
+                            .textFieldStyle(.roundedBorder)
+                            .onChange(of: customer.phone) { _, value in
+                                let formatted = Self.formatPhone(value)
+                                if formatted != value { customer.phone = formatted }
+                            }
+                        if showValidation, let phoneError {
+                            errorText(phoneError)
+                        }
                     }
-                }
-                .buttonStyle(.plain)
-
-                if showValidation, let cityError {
-                    Text(cityError).font(.caption2).foregroundStyle(.red)
+                    .id("phone")
+                } header: {
+                    Text("Отримувач")
                 }
 
-                Button {
-                    guard !selectedCity.isEmpty else {
-                        showValidation = true
-                        return
+                Section {
+                    Button {
+                        showCityPicker = true
+                    } label: {
+                        pickerRow(title: "Місто", value: selectedCity)
                     }
-                    showWarehousePicker = true
-                } label: {
-                    HStack {
-                        Text("Відділення Нової Пошти").foregroundStyle(.primary)
-                        Spacer()
-                        Text(selectedWarehouse.isEmpty ? "Оберіть" : selectedWarehouse)
-                            .foregroundStyle(selectedWarehouse.isEmpty ? .secondary : .primary)
-                            .lineLimit(1)
-                        Image(systemName: "chevron.right")
+                    .buttonStyle(.plain)
+                    .id("city")
+
+                    if showValidation, let cityError {
+                        errorText(cityError)
+                    }
+
+                    Button {
+                        guard !selectedCity.isEmpty else {
+                            showValidation = true
+                            return
+                        }
+                        showWarehousePicker = true
+                    } label: {
+                        pickerRow(title: "Відділення Нової Пошти", value: selectedWarehouse)
+                    }
+                    .buttonStyle(.plain)
+                    .id("warehouse")
+
+                    if showValidation, let warehouseError {
+                        errorText(warehouseError)
+                    }
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Коментар")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                        TextField("Необовʼязково", text: $note, axis: .vertical)
+                            .lineLimit(2...4)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                } header: {
+                    Text("Доставка")
+                } footer: {
+                    Text("Доставка Новою Поштою. Оплата при отриманні.")
+                }
+
+                Section("Замовлення") {
+                    ForEach(cart.lines) { line in
+                        HStack {
+                            Text("\(line.qty) × \(line.product.title)")
+                                .font(.footnote)
+                                .lineLimit(2)
+                            Spacer()
+                            Text(Money.uah(cents: line.totalCents))
+                                .font(.footnote.weight(.semibold))
+                        }
+                    }
+                    HStack {
+                        Text("До сплати при отриманні")
+                        Spacer()
+                        Text(Money.uah(cents: cart.totalCents)).font(.headline)
                     }
                 }
-                .buttonStyle(.plain)
 
-                if showValidation, let warehouseError {
-                    Text(warehouseError).font(.caption2).foregroundStyle(.red)
-                }
-
-                TextField("Коментар (необовʼязково)", text: $note, axis: .vertical)
-                    .lineLimit(2...4)
-            } header: {
-                Text("Доставка")
-            } footer: {
-                Text("Доставка Новою Поштою. Оплата при отриманні.")
-            }
-
-            Section("Замовлення") {
-                ForEach(cart.lines) { line in
-                    HStack {
-                        Text("\(line.qty) × \(line.product.title)")
+                if showValidation, let firstError {
+                    Section {
+                        Label("\(firstError.0): \(firstError.1)", systemImage: "exclamationmark.triangle.fill")
                             .font(.footnote)
-                            .lineLimit(2)
-                        Spacer()
-                        Text(Money.uah(cents: line.totalCents))
-                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(.orange)
                     }
                 }
-                HStack {
-                    Text("До сплати при отриманні")
-                    Spacer()
-                    Text(Money.uah(cents: cart.totalCents)).font(.headline)
-                }
-            }
 
-            if showValidation, let firstError {
+                if let errorMessage {
+                    Section {
+                        Text(errorMessage).font(.footnote).foregroundStyle(.red)
+                    }
+                }
+
                 Section {
-                    Label("\(firstError.0): \(firstError.1)", systemImage: "exclamationmark.triangle.fill")
-                        .font(.footnote)
-                        .foregroundStyle(.orange)
+                    PrimaryActionButton(
+                        title: "Підтвердити замовлення",
+                        systemImage: "checkmark.seal",
+                        isLoading: isSubmitting,
+                        isDisabled: isSubmitting || cart.isEmpty
+                    ) {
+                        submit()
+                    }
                 }
             }
-
-            if let errorMessage {
-                Section {
-                    Text(errorMessage).font(.footnote).foregroundStyle(.red)
-                }
-            }
-
-            Section {
-                PrimaryActionButton(
-                    title: "Підтвердити замовлення",
-                    systemImage: "checkmark.seal",
-                    isLoading: isSubmitting,
-                    isDisabled: isSubmitting || cart.isEmpty
-                ) {
-                    submit()
+            .onChange(of: showValidation) { _, show in
+                guard show, let target = firstErrorField else { return }
+                withAnimation(.easeInOut(duration: 0.25)) {
+                    proxy.scrollTo(target, anchor: .center)
                 }
             }
         }
     }
 
-    @ViewBuilder
-    private func field(title: String, text: Binding<String>, hint: String, error: String?) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            TextField(title, text: text, prompt: Text(hint))
-            if showValidation, let error {
-                Text(error).font(.caption2).foregroundStyle(.red)
-            }
+    /// Which control the form should scroll to when validation fails.
+    private var firstErrorField: String? {
+        if nameError != nil { return "name" }
+        if phoneError != nil { return "phone" }
+        if cityError != nil { return "city" }
+        if warehouseError != nil { return "warehouse" }
+        return nil
+    }
+
+    private func pickerRow(title: String, value: String) -> some View {
+        HStack {
+            Text(title).foregroundStyle(.primary)
+            Spacer()
+            Text(value.isEmpty ? "Оберіть" : value)
+                .foregroundStyle(value.isEmpty ? .secondary : .primary)
+                .lineLimit(1)
+            Image(systemName: "chevron.right")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
+    }
+
+    private func errorText(_ message: String) -> some View {
+        Text(message)
+            .font(.caption2)
+            .foregroundStyle(.red)
     }
 
     // MARK: - Actions

@@ -71,6 +71,7 @@ CREATE TABLE IF NOT EXISTS orders (
   client_order_id TEXT UNIQUE,
   customer_json   TEXT NOT NULL,
   phone_norm      TEXT,                            -- +380XXXXXXXXX for order history
+  client_token_hash TEXT,                          -- sha256(device token): owner-only history
   ttn             TEXT,                            -- Nova Poshta waybill
   ttn_status      TEXT,
   total_cents     INTEGER NOT NULL,
@@ -133,8 +134,18 @@ CREATE TABLE IF NOT EXISTS reviews (
   text        TEXT NOT NULL,
   status      TEXT NOT NULL,          -- published | rejected
   reason      TEXT,
+  hidden      INTEGER NOT NULL DEFAULT 0,
   created_at  TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS review_reports (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  review_id   INTEGER NOT NULL,
+  reason      TEXT,
+  created_at  TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_review_reports ON review_reports(review_id);
 CREATE INDEX IF NOT EXISTS idx_reviews_product ON reviews(product_id, status);
 
 -- ── Analytics events (owner reporting) ───────────────────────────────────

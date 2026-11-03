@@ -1,7 +1,14 @@
 import { createServer } from 'node:http';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { all, get, run } from '../db/database.js';
-import { AppError, NotFoundError, ValidationError, toPublicError } from '../core/errors.js';
+import {
+  AppError,
+  NotFoundError,
+  RateLimitError,
+  UnauthorizedError,
+  ValidationError,
+  toPublicError,
+} from '../core/errors.js';
 import { createOrder } from '../orders/router.js';
 import { getOrder } from '../orders/outbox.js';
 import { norm, normPhone } from '../domain/normalize.js';
@@ -11,6 +18,49 @@ import { NovaPoshtaService } from '../services/novaPoshta.js';
 import { searchCities } from '../services/uaCities.js';
 
 const MAX_BODY_BYTES = 256 * 1024;
+
+// ── Device identity & rate limiting ─────────────────────────────────────────
+// The app generates a random device token; orders store only its hash, so the
+// order history endpoint can never be browsed by knowing a phone number.
+
+const RATE_BUCKETS = new Map();
+
+function clientTokenFrom(req) {
+  const raw = String(req.headers['x-client-token'] ?? '').trim();
+  return /^[A-Za-z0-9_-]{16,64}$/.test(raw) ? raw : null;
+}
+
+function tokenHash(token) {
+  return createHash('sha256').update(token).digest('hex').slice(0, 32);
+}
+
+function requireClientToken(req) {
+  const token = clientTokenFrom(req);
+  if (!token) throw new UnauthorizedError('Потрібен токен пристрою');
+  return token;
+}
+
+function rateLimit(key, limit, windowMs) {
+  const now = Date.now();
+  if (RATE_BUCKETS.size > 10_000) {
+    for (const [bucketKey, bucket] of RATE_BUCKETS) {
+      if (bucket.resetAt <= now) RATE_BUCKETS.delete(bucketKey);
+    }
+  }
+  const entry = RATE_BUCKETS.get(key);
+  if (!entry || entry.resetAt <= now) {
+    RATE_BUCKETS.set(key, { count: 1, resetAt: now + windowMs });
+    return;
+  }
+  entry.count += 1;
+  if (entry.count > limit) {
+    throw new RateLimitError('Забагато запитів. Спробуйте трохи пізніше.');
+  }
+}
+
+function clientKey(req) {
+  return clientTokenFrom(req) ?? `ip:${req.socket.remoteAddress ?? 'unknown'}`;
+}
 
 function sendJson(res, status, body, extraHeaders = {}) {
   const payload = JSON.stringify(body);
@@ -426,6 +476,8 @@ export function createAppServer({ db, adapters, ai, config, logger, syncTrigger 
       }
 
       if (req.method === 'POST' && path === '/v1/events') {
+        const token = requireClientToken(req);
+        rateLimit(`events:${token}`, 120, 60_000);
         const body = await readJsonBody(req);
         const allowed = new Set(['product_view', 'add_to_cart', 'order_created', 'search']);
         const name = String(body?.name ?? '');
@@ -448,6 +500,10 @@ export function createAppServer({ db, adapters, ai, config, logger, syncTrigger 
       }
 
       if (req.method === 'GET' && path === '/v1/analytics/summary') {
+        const authorization = String(req.headers.authorization ?? '');
+        if (!config.adminToken || authorization !== `Bearer ${config.adminToken}`) {
+          throw new UnauthorizedError('Доступ до аналітики заборонено');
+        }
         const days = Math.min(Math.max(Number.parseInt(url.searchParams.get('days') ?? '7', 10) || 7, 1), 90);
         const since = new Date(Date.now() - days * 86_400_000).toISOString();
         const totals = all(
@@ -464,6 +520,41 @@ export function createAppServer({ db, adapters, ai, config, logger, syncTrigger 
         );
         const orders = get(db, 'SELECT COUNT(*) AS count, COALESCE(SUM(total_cents), 0) AS revenue FROM orders WHERE created_at >= ?', [since]);
         sendJson(res, 200, { days, totals, topProducts, orders }, { 'cache-control': 'no-store' });
+        return;
+      }
+
+      // Apple 1.2 / UGC: any customer can report a review. Three reports hide it.
+      const reportMatch = path.match(/^\/v1\/reviews\/(\d+)\/report$/);
+      if (reportMatch && req.method === 'POST') {
+        const token = requireClientToken(req);
+        rateLimit(`review-report:${token}`, 10, 3_600_000);
+
+        const reviewId = Number.parseInt(reportMatch[1], 10);
+        const review = get(db, 'SELECT id, product_id FROM reviews WHERE id = ?', [reviewId]);
+        if (!review) throw new NotFoundError('Відгук не знайдено');
+
+        const body = await readJsonBody(req).catch(() => ({}));
+        const reason = String(body?.reason ?? '').trim().slice(0, 200);
+        run(db, 'INSERT INTO review_reports (review_id, reason, created_at) VALUES (?, ?, ?)', [
+          reviewId,
+          reason,
+          new Date().toISOString(),
+        ]);
+
+        const reports = get(db, 'SELECT COUNT(*) AS c FROM review_reports WHERE review_id = ?', [reviewId]).c;
+        if (reports >= 3) {
+          run(db, 'UPDATE reviews SET hidden = 1 WHERE id = ?', [reviewId]);
+          run(
+            db,
+            `UPDATE products SET
+               rating_avg = COALESCE((SELECT AVG(rating) FROM reviews WHERE product_id = ? AND status = 'published' AND hidden = 0), 0),
+               rating_count = (SELECT COUNT(*) FROM reviews WHERE product_id = ? AND status = 'published' AND hidden = 0)
+             WHERE id = ?`,
+            [review.product_id, review.product_id, review.product_id],
+          );
+        }
+
+        sendJson(res, 202, { accepted: true, reports }, { 'cache-control': 'no-store' });
         return;
       }
 
@@ -501,7 +592,7 @@ export function createAppServer({ db, adapters, ai, config, logger, syncTrigger 
           const rows = all(
             db,
             `SELECT id, author, rating, text, created_at FROM reviews
-             WHERE product_id = ? AND status = 'published'
+             WHERE product_id = ? AND status = 'published' AND hidden = 0
              ORDER BY created_at DESC LIMIT 50`,
             [id],
           );
@@ -524,6 +615,7 @@ export function createAppServer({ db, adapters, ai, config, logger, syncTrigger 
           return;
         }
 
+        rateLimit(`reviews:${clientKey(req)}`, 5, 3_600_000);
         const body = await readJsonBody(req);
         const author = String(body?.author ?? '').trim().slice(0, 60);
         const text = String(body?.text ?? '').trim().slice(0, 1000);
@@ -548,8 +640,8 @@ export function createAppServer({ db, adapters, ai, config, logger, syncTrigger 
         run(
           db,
           `UPDATE products SET
-             rating_avg = (SELECT AVG(rating) FROM reviews WHERE product_id = ? AND status = 'published'),
-             rating_count = (SELECT COUNT(*) FROM reviews WHERE product_id = ? AND status = 'published')
+             rating_avg = COALESCE((SELECT AVG(rating) FROM reviews WHERE product_id = ? AND status = 'published' AND hidden = 0), 0),
+             rating_count = (SELECT COUNT(*) FROM reviews WHERE product_id = ? AND status = 'published' AND hidden = 0)
            WHERE id = ?`,
           [id, id, id],
         );
@@ -572,9 +664,14 @@ export function createAppServer({ db, adapters, ai, config, logger, syncTrigger 
       }
 
       if (req.method === 'GET' && path === '/v1/orders') {
+        const token = requireClientToken(req);
         const phone = normPhone(url.searchParams.get('phone'));
         if (!phone) throw new ValidationError('Вкажіть коректний номер телефону', [{ field: 'phone' }]);
-        const orders = all(db, 'SELECT * FROM orders WHERE phone_norm = ? ORDER BY created_at DESC LIMIT 50', [phone]);
+        const orders = all(
+          db,
+          'SELECT * FROM orders WHERE phone_norm = ? AND client_token_hash = ? ORDER BY created_at DESC LIMIT 50',
+          [phone, tokenHash(token)],
+        );
         const items = orders.length
           ? all(
               db,
@@ -613,8 +710,18 @@ export function createAppServer({ db, adapters, ai, config, logger, syncTrigger 
       }
 
       if (req.method === 'POST' && path === '/v1/orders') {
+        rateLimit(`orders:${clientKey(req)}`, 10, 3_600_000);
         const payload = await readJsonBody(req);
-        const result = await createOrder({ db, adapters, config, logger, payload, novaPoshta });
+        const token = clientTokenFrom(req);
+        const result = await createOrder({
+          db,
+          adapters,
+          config,
+          logger,
+          payload,
+          novaPoshta,
+          clientTokenHash: token ? tokenHash(token) : null,
+        });
         sendJson(res, 201, result, { 'cache-control': 'no-store' });
         return;
       }
@@ -624,6 +731,14 @@ export function createAppServer({ db, adapters, ai, config, logger, syncTrigger 
         const id = decodeURIComponent(orderMatch[1]);
         const data = getOrder(db, id);
         if (!data) throw new NotFoundError('Замовлення не знайдено');
+        // Order status contains the customer's name and address: only the
+        // device that placed the order may read it.
+        if (data.order.client_token_hash) {
+          const token = clientTokenFrom(req);
+          if (!token || tokenHash(token) !== data.order.client_token_hash) {
+            throw new NotFoundError('Замовлення не знайдено');
+          }
+        }
         sendJson(res, 200, {
           id: data.order.id,
           status: data.order.status,

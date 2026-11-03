@@ -73,6 +73,7 @@ struct CartView: View {
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
+            .accessibilityLabel("Оформити замовлення")
             .padding(.horizontal, Theme.screenPadding)
             .padding(.vertical, 10)
             .background(.ultraThinMaterial)
@@ -106,6 +107,7 @@ struct CartView: View {
                             .font(.title3)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Зменшити кількість")
 
                     Text("\(line.qty)")
                         .font(.subheadline.weight(.semibold))
@@ -119,7 +121,8 @@ struct CartView: View {
                             .font(.title3)
                     }
                     .buttonStyle(.plain)
-                    .disabled(line.qty >= 10)
+                    .disabled(line.qty >= CartStore.maxQty(for: line.product))
+                    .accessibilityLabel("Збільшити кількість")
                 }
 
                 Button(role: .destructive) {
@@ -130,6 +133,7 @@ struct CartView: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.red)
+                .accessibilityLabel("Видалити товар")
             }
         }
         .padding(.vertical, 4)

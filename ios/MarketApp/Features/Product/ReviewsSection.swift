@@ -6,6 +6,8 @@ struct ReviewsSection: View {
 
     @State private var page: ReviewPage?
     @State private var errorMessage: String?
+    @State private var reportTarget: Review?
+    @State private var reportMessage: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -24,6 +26,10 @@ struct ReviewsSection: View {
 
             if let errorMessage {
                 Text(errorMessage).font(.caption).foregroundStyle(.secondary)
+            }
+
+            if let reportMessage {
+                Text(reportMessage).font(.caption).foregroundStyle(.green)
             }
 
             if let page {
@@ -46,6 +52,19 @@ struct ReviewsSection: View {
                             }
                             Text(review.text)
                                 .font(.footnote)
+
+                            HStack {
+                                Spacer()
+                                Button {
+                                    reportTarget = review
+                                } label: {
+                                    Label("Поскаржитися", systemImage: "flag")
+                                        .font(.caption2)
+                                }
+                                .buttonStyle(.plain)
+                                .foregroundStyle(.secondary)
+                                .accessibilityLabel("Поскаржитися на відгук")
+                            }
                         }
                         .padding(10)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -54,9 +73,38 @@ struct ReviewsSection: View {
                 }
             }
         }
+        .confirmationDialog(
+            "Поскаржитися на відгук",
+            isPresented: Binding(
+                get: { reportTarget != nil },
+                set: { if !$0 { reportTarget = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Спам") { sendReport("спам") }
+            Button("Образа") { sendReport("образа") }
+            Button("Фейковий відгук") { sendReport("фейк") }
+            Button("Скасувати", role: .cancel) { reportTarget = nil }
+        } message: {
+            Text("Модератор перевірить відгук. Три скарги приховують його автоматично.")
+        }
         .task { await load() }
         .onChange(of: showSheet) { _, isPresented in
             if !isPresented { Task { await load() } }
+        }
+    }
+
+    private func sendReport(_ reason: String) {
+        guard let review = reportTarget else { return }
+        reportTarget = nil
+        reportMessage = nil
+        Task { @MainActor in
+            do {
+                _ = try await APIClient.shared.reportReview(id: review.id, reason: reason)
+                reportMessage = "Дякуємо, скаргу надіслано."
+            } catch {
+                reportMessage = error.localizedDescription
+            }
         }
     }
 

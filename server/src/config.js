@@ -113,6 +113,9 @@ export const config = {
 
   // Optional token for automation endpoints (CI smoke tests, external schedulers).
   internalToken: process.env.INTERNAL_TOKEN ?? '',
+
+  // Bearer token that protects the analytics summary.
+  adminToken: process.env.ADMIN_TOKEN ?? '',
 };
 
 export function supplierMargin(supplierId) {

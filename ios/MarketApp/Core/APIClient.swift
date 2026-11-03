@@ -144,6 +144,10 @@ struct APIClient {
         try await get("/v1/products/\(encoded(productId))/reviews")
     }
 
+    func reportReview(id: Int, reason: String) async throws -> ReviewReportResult {
+        try await post("/v1/reviews/\(id)/report", body: ["reason": reason])
+    }
+
     func submitReview(productId: String, author: String, rating: Int, text: String) async throws -> ReviewResult {
         try await post(
             "/v1/products/\(encoded(productId))/reviews",
@@ -175,6 +179,7 @@ struct APIClient {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue(ClientIdentity.token, forHTTPHeaderField: "X-Client-Token")
         return try await send(request)
     }
 
@@ -183,6 +188,7 @@ struct APIClient {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue(ClientIdentity.token, forHTTPHeaderField: "X-Client-Token")
         request.httpBody = try JSONEncoder().encode(body)
         return try await send(request)
     }
@@ -192,6 +198,7 @@ struct APIClient {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue(ClientIdentity.token, forHTTPHeaderField: "X-Client-Token")
         request.httpBody = try JSONEncoder().encode(body)
         return try await send(request)
     }

@@ -123,6 +123,11 @@ struct ReviewPage: Codable {
     let items: [Review]
 }
 
+struct ReviewReportResult: Codable {
+    let accepted: Bool
+    let reports: Int?
+}
+
 struct ReviewResult: Codable {
     let status: String
     let average: Double

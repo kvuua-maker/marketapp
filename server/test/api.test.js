@@ -67,7 +67,7 @@ test('API creates an order and exposes its status', async () => {
   try {
     const response = await fetch(`${base}/v1/orders`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', 'x-client-token': 'test-device-token-0001' },
       body: JSON.stringify({
         customer: {
           fullName: 'Олена Шевченко',
@@ -83,19 +83,74 @@ test('API creates an order and exposes its status', async () => {
     assert.equal(order.payment, 'cod');
     assert.ok(order.orderId.startsWith('MA-'));
 
-    const status = await (await fetch(`${base}/v1/orders/${order.orderId}`)).json();
+    const forbidden = await fetch(`${base}/v1/orders/${order.orderId}`);
+    assert.equal(forbidden.status, 404, 'order status must not be readable by another client');
+
+    const statusResponse = await fetch(`${base}/v1/orders/${order.orderId}`, {
+      headers: { 'x-client-token': 'test-device-token-0001' },
+    });
+    assert.equal(statusResponse.status, 200);
+    const status = await statusResponse.json();
     assert.equal(status.id, order.orderId);
     assert.equal(status.items.length, 1);
     assert.equal(status.items[0].qty, 2);
 
     const invalid = await fetch(`${base}/v1/orders`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', 'x-client-token': 'test-device-token-0001' },
       body: JSON.stringify({ customer: {}, items: [] }),
     });
     assert.equal(invalid.status, 422);
     const error = await invalid.json();
     assert.equal(error.error.code, 'validation_error');
+  } finally {
+    server.close();
+  }
+});
+
+test('order history requires the device token that created the order', async () => {
+  const db = makeDb();
+  insertProduct(db, { id: 'aveopt:1', stock: 10 });
+  const { server, base } = await startServer(db);
+
+  try {
+    const created = await fetch(`${base}/v1/orders`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-client-token': 'device-alpha-000001' },
+      body: JSON.stringify({
+        customer: { fullName: 'Олена Шевченко', phone: '+380671112233', city: 'Київ', branch: 'Відділення №12' },
+        items: [{ productId: 'aveopt:1', qty: 1 }],
+      }),
+    });
+    assert.equal(created.status, 201);
+
+    const anonymous = await fetch(`${base}/v1/orders?phone=%2B380671112233`);
+    assert.equal(anonymous.status, 401);
+
+    const foreign = await fetch(`${base}/v1/orders?phone=%2B380671112233`, {
+      headers: { 'x-client-token': 'device-beta-000002' },
+    });
+    assert.equal(foreign.status, 200);
+    const foreignBody = await foreign.json();
+    assert.equal(foreignBody.items.length, 0, 'another device must not see the order');
+
+    const own = await fetch(`${base}/v1/orders?phone=%2B380671112233`, {
+      headers: { 'x-client-token': 'device-alpha-000001' },
+    });
+    assert.equal(own.status, 200);
+    const ownBody = await own.json();
+    assert.equal(ownBody.items.length, 1);
+  } finally {
+    server.close();
+  }
+});
+
+test('analytics summary is protected by the admin bearer token', async () => {
+  const db = makeDb();
+  const { server, base } = await startServer(db);
+  try {
+    const response = await fetch(`${base}/v1/analytics/summary`);
+    assert.equal(response.status, 401);
   } finally {
     server.close();
   }

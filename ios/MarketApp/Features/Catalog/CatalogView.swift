@@ -119,6 +119,8 @@ struct CatalogView: View {
                             }
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Кошик")
+                    .accessibilityValue(cart.count > 0 ? "\(cart.count) товарів" : "порожній")
                 }
             }
 
@@ -127,6 +129,7 @@ struct CatalogView: View {
                     .foregroundStyle(.secondary)
 
                 TextField("Пошук товарів", text: $catalog.searchText)
+                    .accessibilityLabel("Пошук товарів")
                     .focused($searchFocused)
                     .submitLabel(.search)
                     .autocorrectionDisabled()
@@ -154,12 +157,15 @@ struct CatalogView: View {
                     Image(systemName: "arrow.up.arrow.down")
                         .foregroundStyle(.secondary)
                 }
+                .accessibilityLabel("Сортування")
+                .accessibilityValue(catalog.sort.title)
 
                 Button {
                     searchFocused = false
                     showFilters = true
                 } label: {
                     Image(systemName: "slider.horizontal.3")
+                        .accessibilityLabel("Фільтри")
                         .foregroundStyle(catalog.activeFilterCount > 0 ? Theme.accent : .secondary)
                         .overlay(alignment: .topTrailing) {
                             if catalog.activeFilterCount > 0 {

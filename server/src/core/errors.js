@@ -36,6 +36,20 @@ export class NotConfiguredError extends AppError {
   }
 }
 
+export class UnauthorizedError extends AppError {
+  constructor(message) {
+    super(message, { code: 'unauthorized', status: 401 });
+    this.name = 'UnauthorizedError';
+  }
+}
+
+export class RateLimitError extends AppError {
+  constructor(message) {
+    super(message, { code: 'rate_limited', status: 429 });
+    this.name = 'RateLimitError';
+  }
+}
+
 export function toPublicError(error) {
   const isAppError = error instanceof AppError;
   return {

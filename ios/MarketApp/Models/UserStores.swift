@@ -63,8 +63,28 @@ final class ProfileStore: ObservableObject {
     }
 
     func addAddress(label: String, city: String, branch: String) {
-        guard !city.isEmpty, !branch.isEmpty else { return }
-        let address = SavedAddress(label: label.isEmpty ? city : label, city: city, branch: branch)
+        let cityName = city.trimmingCharacters(in: .whitespacesAndNewlines)
+        let branchName = branch.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cityName.isEmpty, !branchName.isEmpty else { return }
+
+        // Never store the same Nova Poshta branch twice.
+        if let index = addresses.firstIndex(where: {
+            $0.city.caseInsensitiveCompare(cityName) == .orderedSame &&
+            $0.branch.caseInsensitiveCompare(branchName) == .orderedSame
+        }) {
+            let newLabel = label.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !newLabel.isEmpty, addresses[index].label != newLabel {
+                addresses[index].label = newLabel
+                persistAddresses()
+            }
+            return
+        }
+
+        let address = SavedAddress(
+            label: label.isEmpty ? cityName : label,
+            city: cityName,
+            branch: branchName
+        )
         addresses.append(address)
         persistAddresses()
     }
