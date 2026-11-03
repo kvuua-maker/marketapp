@@ -72,12 +72,38 @@ export function detectLanguage(value) {
   return uk >= ru ? 'uk' : 'ru';
 }
 
+// Last-resort RU -> UA cleanup for the few words models keep echoing verbatim.
+const RU_UA_WORDS = {
+  дисковый: 'дисковий', дисковая: 'дискова', дисковое: 'дискове', дисковые: 'дискові',
+  черный: 'чорний', черная: 'чорна', черное: 'чорне', черные: 'чорні',
+  белый: 'білий', белая: 'біла', белое: 'біле', белые: 'білі',
+  красный: 'червоний', синий: 'синій', зеленый: 'зелений', желтый: 'жовтий',
+  серый: 'сірий', розовый: 'рожевий', оранжевый: 'помаранчевий',
+  женские: 'жіночі', женский: 'жіночий', мужские: 'чоловічі', мужской: 'чоловічий',
+  детский: 'дитячий', детские: 'дитячі', настольный: 'настільний', напольный: 'підлоговий',
+  электрический: 'електричний', аккумуляторный: 'акумуляторний', беспроводной: 'бездротовий',
+  беспроводные: 'бездротові', светодиодный: 'світлодіодний', металлический: 'металевий',
+};
+
+/** Replaces known Russian words with Ukrainian equivalents, preserving case. */
+export function polishUkrainian(value) {
+  return String(value ?? '').replace(/(?<![А-Яа-яЁёІіЇїЄєҐґ])([А-Яа-яЁёІіЇїЄєҐґ]{3,})(?![А-Яа-яЁёІіЇїЄєҐґ])/g, (word) => {
+    const replacement = RU_UA_WORDS[word.toLowerCase()];
+    if (!replacement) return word;
+    if (word[0] === word[0].toUpperCase() && word[0] !== word[0].toLowerCase()) {
+      return replacement.charAt(0).toUpperCase() + replacement.slice(1);
+    }
+    return replacement;
+  });
+}
+
 export function normalizeTitle(value, maxChars = 120) {
   const base = collapseWhitespace(decodeEntities(value))
     .replace(/\s*[|/]+\s*/g, ' — ')
     .replace(/\s{2,}/g, ' ');
   const trimmed = truncate(base, maxChars, { ellipsis: '' });
-  return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
+  const polished = polishUkrainian(trimmed);
+  return polished.charAt(0).toUpperCase() + polished.slice(1);
 }
 
 /** Stable hash of the fields that influence AI output — used to skip re-processing. */

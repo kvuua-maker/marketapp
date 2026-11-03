@@ -114,8 +114,17 @@ jobs:
           COUNT=$(node -e 'const d=require(process.env.RUNNER_TEMP+"/apps.json");process.stdout.write(String((d.data||[]).length))')
           echo "App Store Connect records for $APP_BUNDLE: $COUNT"
           if [ "$COUNT" = "0" ]; then
-            echo "::warning::No app record for $APP_BUNDLE. The upload will fail until the app is created in App Store Connect."
+            echo "::warning::No app record for $APP_BUNDLE. altool will fail until the app exists in App Store Connect."
           fi
+          echo "App records visible to this API key:"
+          curl -s -H "Authorization: Bearer $ASC_TOKEN" "$API/apps?limit=50" -o "$RUNNER_TEMP/apps-all.json"
+          node -e '
+            const fs = require("fs");
+            const d = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + "/apps-all.json", "utf8"));
+            const rows = d.data || [];
+            if (rows.length === 0) console.log("  (none)");
+            rows.forEach(a => console.log("  " + a.attributes.bundleId + " — " + a.attributes.name));
+          '
 
       - name: Create signing identity through the API
         run: |
@@ -347,7 +356,11 @@ jobs:
           RC=${PIPESTATUS[0]}
           set -e
           if [ "$RC" != "0" ]; then
-            echo "::error::Upload failed with exit code $RC"
+            if grep -q "Cannot determine the Apple ID from Bundle ID" "$RUNNER_TEMP/upload.log"; then
+              echo "::error title=App record missing::App Store Connect has no app for bundle id $APP_BUNDLE. Create it: App Store Connect -> My Apps -> + -> iOS -> Bundle ID $APP_BUNDLE -> name MarketApp. Then re-run this workflow (nothing else is needed)."
+            else
+              echo "::error::Upload failed with exit code $RC"
+            fi
             exit "$RC"
           fi
           echo "::notice title=Uploaded::Build $BUILD_NUMBER ($MARKETING_VERSION) sent to TestFlight"
