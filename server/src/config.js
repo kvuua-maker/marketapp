@@ -1,4 +1,8 @@
 import process from 'node:process';
+import { loadEnvFile } from './core/env.js';
+
+// Load server/.env before any value is read below.
+const envFile = loadEnvFile(new URL('../.env', import.meta.url));
 
 function int(value, fallback) {
   const parsed = Number.parseInt(value ?? '', 10);
@@ -19,6 +23,7 @@ const deepseekKey = process.env.DEEPSEEK_API_KEY ?? '';
 
 export const config = {
   env: process.env.NODE_ENV ?? 'development',
+  envFile: envFile.loaded ? envFile.path : null,
   port: int(process.env.PORT, 8787),
   dbPath: process.env.DB_PATH ?? new URL('../data/marketapp.db', import.meta.url).pathname,
   defaultCurrency: 'UAH',
@@ -45,6 +50,7 @@ export const config = {
     baseUrl: process.env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com',
     model: process.env.DEEPSEEK_MODEL ?? 'deepseek-chat',
     batchSize: int(process.env.DEEPSEEK_BATCH_SIZE, 12),
+    concurrency: int(process.env.DEEPSEEK_CONCURRENCY, 3),
     timeoutMs: int(process.env.DEEPSEEK_TIMEOUT_MS, 90_000),
     maxRetries: int(process.env.DEEPSEEK_MAX_RETRIES, 3),
     minDescriptionChars: int(process.env.AI_MIN_DESCRIPTION_CHARS, 40),

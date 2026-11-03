@@ -36,6 +36,20 @@ function chunk(array, size) {
   return chunks;
 }
 
+/** Runs async workers over a list with a bounded pool (keeps DeepSeek happy). */
+async function mapPool(items, limit, worker) {
+  let next = 0;
+  const workers = Array.from({ length: Math.min(Math.max(limit, 1), items.length) }, async () => {
+    while (true) {
+      const index = next;
+      next += 1;
+      if (index >= items.length) return;
+      await worker(items[index], index);
+    }
+  });
+  await Promise.all(workers);
+}
+
 export class AIController {
   constructor({ client, config, logger, db }) {
     this.client = client;
@@ -193,8 +207,9 @@ export class AIController {
     if (pending.length === 0) return [...results.values()];
 
     const batches = chunk(pending, this.config.ai.batchSize);
+    const concurrency = this.config.ai.concurrency ?? 1;
 
-    for (const batch of batches) {
+    await mapPool(batches, concurrency, async (batch) => {
       let byIndex = null;
       if (this.enabled) {
         try {
@@ -219,7 +234,7 @@ export class AIController {
         });
       });
       this.writeCache(cacheWrites);
-    }
+    });
 
     return [...results.values()];
   }
