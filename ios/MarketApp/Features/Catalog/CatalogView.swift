@@ -67,7 +67,7 @@ struct CatalogView: View {
         .background(Color(.systemGroupedBackground))
         .navigationTitle("MarketApp")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar(UIDevice.current.userInterfaceIdiom == .pad ? .visible : .hidden, for: .navigationBar)
+        .toolbar(UIDevice.current.userInterfaceIdiom == .pad ? Visibility.visible : Visibility.hidden, for: .navigationBar)
         .onPreferenceChange(CatalogWidthKey.self) { width in
             if width > 0 { contentWidth = width }
         }

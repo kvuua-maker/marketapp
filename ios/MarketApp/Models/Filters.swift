@@ -19,6 +19,24 @@ struct SuggestionPage: Codable {
     let items: [Suggestion]
 }
 
+enum SortOption: String, CaseIterable, Identifiable {
+    case relevance
+    case priceAsc = "price_asc"
+    case priceDesc = "price_desc"
+    case newest = "new"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .relevance: return "За релевантністю"
+        case .priceAsc: return "Від дешевих"
+        case .priceDesc: return "Від дорогих"
+        case .newest: return "Новинки"
+        }
+    }
+}
+
 struct ProductQuery {
     var category: String?
     var search: String = ""
