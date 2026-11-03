@@ -49,14 +49,27 @@ export function enqueueOutbox(db, { orderId, supplierId, channel = 'email', to, 
   ).lastInsertRowid;
 }
 
-async function sendViaResend({ apiKey, from, to, subject, text }) {
+function renderEmailHtml(body) {
+  const rows = body
+    .split('\n')
+    .map((line) => (line.trim() === '' ? '<div style="height:8px"></div>' : `<div>${line.replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]))}</div>`))
+    .join('');
+  return `<!doctype html><html><body style="margin:0;background:#f4f4f5;font-family:-apple-system,Segoe UI,Roboto,sans-serif">
+  <div style="max-width:640px;margin:0 auto;padding:24px">
+    <div style="background:#4f46e5;color:#fff;padding:16px 20px;border-radius:12px 12px 0 0;font-size:18px;font-weight:600">MarketApp — нове замовлення</div>
+    <div style="background:#fff;padding:20px;border-radius:0 0 12px 12px;font-size:14px;line-height:1.5;color:#18181b">${rows}</div>
+    <div style="text-align:center;color:#71717a;font-size:12px;padding-top:12px">Оплата при отриманні · Нова Пошта</div>
+  </div></body></html>`;
+}
+
+async function sendViaResend({ apiKey, from, to, subject, text, html }) {
   const response = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: {
       authorization: `Bearer ${apiKey}`,
       'content-type': 'application/json',
     },
-    body: JSON.stringify({ from, to: [to], subject, text }),
+    body: JSON.stringify({ from, to: [to], subject, text, html: html ?? renderEmailHtml(text) }),
   });
   if (!response.ok) {
     const body = await response.text().catch(() => '');
@@ -89,6 +102,7 @@ export async function deliverOutbox(db, { config, logger, limit = 20 }) {
         to: entry.to_addr,
         subject: entry.subject,
         text: entry.body,
+        html: renderEmailHtml(entry.body),
       });
       run(db, "UPDATE outbox SET status = 'sent', sent_at = ? WHERE id = ?", {
         1: new Date().toISOString(),

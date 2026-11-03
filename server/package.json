@@ -12,5 +12,8 @@
     "sync": "node --no-warnings scripts/sync-once.js",
     "test": "node --no-warnings --test test/*.test.js",
     "dev": "node --no-warnings --watch src/index.js"
+  },
+  "dependencies": {
+    "sharp": "^0.35.5"
   }
 }

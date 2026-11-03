@@ -1,13 +1,15 @@
 import SwiftUI
+import UIKit
 
 struct CheckoutView: View {
     @EnvironmentObject private var cart: CartStore
     @Environment(\.dismiss) private var dismiss
 
-    @State private var customer = Customer(fullName: "", phone: "", city: "", branch: "", comment: "")
+    @State private var customer = Customer()
     @State private var isSubmitting = false
     @State private var errorMessage: String?
     @State private var result: OrderResponse?
+    @State private var showValidation = false
 
     var body: some View {
         Group {
@@ -21,27 +23,61 @@ struct CheckoutView: View {
         .navigationBarTitleDisplayMode(.inline)
     }
 
+    // MARK: - Validation
+
+    private var nameError: String? {
+        let value = customer.fullName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if value.isEmpty { return "Вкажіть прізвище та імʼя" }
+        if !value.contains(" ") { return "Потрібні прізвище та імʼя через пробіл" }
+        if value.count < 5 { return "Занадто коротко" }
+        return nil
+    }
+
+    private var phoneError: String? {
+        let digits = customer.phone.filter(\.isNumber)
+        if digits.isEmpty { return "Вкажіть номер телефону" }
+        if digits.count < 10 { return "Телефон має містити 10 цифр" }
+        return nil
+    }
+
+    private var cityError: String? {
+        customer.city.trimmingCharacters(in: .whitespacesAndNewlines).count < 2 ? "Вкажіть місто" : nil
+    }
+
+    private var branchError: String? {
+        customer.branch.trimmingCharacters(in: .whitespacesAndNewlines).count < 2 ? "Вкажіть номер відділення" : nil
+    }
+
+    private var firstError: (field: String, message: String)? {
+        if let nameError { return ("ПІБ", nameError) }
+        if let phoneError { return ("Телефон", phoneError) }
+        if let cityError { return ("Місто", cityError) }
+        if let branchError { return ("Відділення", branchError) }
+        return nil
+    }
+
+    private var canSubmit: Bool { firstError == nil && !cart.isEmpty }
+
+    // MARK: - Form
+
     private var form: some View {
         Form {
             Section {
-                TextField("Прізвище та імʼя", text: $customer.fullName)
-                    .textContentType(.name)
-                    .textInputAutocapitalization(.words)
-
-                TextField("+380 XX XXX XX XX", text: $customer.phone)
-                    .keyboardType(.phonePad)
-                    .textContentType(.telephoneNumber)
+                field(title: "Прізвище та імʼя", text: $customer.fullName, hint: "Наприклад: Іван Петренко", error: nameError)
+                field(
+                    title: "Телефон",
+                    text: $customer.phone,
+                    hint: "+380 XX XXX XX XX",
+                    error: phoneError,
+                    keyboard: .phonePad
+                )
             } header: {
                 Text("Отримувач")
             }
 
             Section {
-                TextField("Місто", text: $customer.city)
-                    .textContentType(.addressCity)
-                    .textInputAutocapitalization(.words)
-
-                TextField("Відділення Нової Пошти, напр. №12", text: $customer.branch)
-
+                field(title: "Місто", text: $customer.city, hint: "Київ", error: cityError)
+                field(title: "Відділення Нової Пошти", text: $customer.branch, hint: "№12", error: branchError)
                 TextField("Коментар (необовʼязково)", text: $customer.comment, axis: .vertical)
                     .lineLimit(2...4)
             } header: {
@@ -64,16 +100,21 @@ struct CheckoutView: View {
                 HStack {
                     Text("До сплати при отриманні")
                     Spacer()
-                    Text(Money.uah(cents: cart.totalCents))
-                        .font(.headline)
+                    Text(Money.uah(cents: cart.totalCents)).font(.headline)
+                }
+            }
+
+            if showValidation, let firstError {
+                Section {
+                    Label("\(firstError.field): \(firstError.message)", systemImage: "exclamationmark.triangle.fill")
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
                 }
             }
 
             if let errorMessage {
                 Section {
-                    Text(errorMessage)
-                        .font(.footnote)
-                        .foregroundStyle(.red)
+                    Text(errorMessage).font(.footnote).foregroundStyle(.red)
                 }
             }
 
@@ -82,33 +123,45 @@ struct CheckoutView: View {
                     submit()
                 } label: {
                     HStack {
-                        if isSubmitting {
-                            ProgressView()
-                                .tint(.white)
-                        }
+                        if isSubmitting { ProgressView().tint(.white) }
                         Text(isSubmitting ? "Надсилаємо…" : "Оформити замовлення (Оплата при отриманні)")
                             .fontWeight(.semibold)
                             .frame(maxWidth: .infinity)
                     }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(!canSubmit || isSubmitting || cart.isEmpty)
+                .disabled(isSubmitting || cart.isEmpty)
             }
         }
     }
 
-    private var canSubmit: Bool {
-        let name = customer.fullName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let digits = customer.phone.filter(\.isNumber)
-        return name.count >= 5
-            && name.contains(" ")
-            && digits.count >= 10
-            && customer.city.trimmingCharacters(in: .whitespacesAndNewlines).count >= 2
-            && customer.branch.trimmingCharacters(in: .whitespacesAndNewlines).count >= 2
+    @ViewBuilder
+    private func field(
+        title: String,
+        text: Binding<String>,
+        hint: String,
+        error: String?,
+        keyboard: UIKeyboardType = .default
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            TextField(title, text: text, prompt: Text(hint))
+                .keyboardType(keyboard)
+            if showValidation, let error {
+                Text(error)
+                    .font(.caption2)
+                    .foregroundStyle(.red)
+            }
+        }
     }
 
+    // MARK: - Actions
+
     private func submit() {
-        guard canSubmit, !cart.isEmpty, !isSubmitting else { return }
+        guard !isSubmitting, !cart.isEmpty else { return }
+        guard firstError == nil else {
+            showValidation = true
+            return
+        }
         isSubmitting = true
         errorMessage = nil
 
@@ -147,6 +200,9 @@ struct CheckoutView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Label("Оплата при отриманні у відділенні Нової Пошти", systemImage: "shippingbox")
                     Label("Ми звʼяжемося з вами для підтвердження", systemImage: "phone")
+                    if let ttn = response.ttn {
+                        Label("ТТН: \(ttn)", systemImage: "number")
+                    }
                 }
                 .font(.footnote)
                 .padding(14)
@@ -154,12 +210,10 @@ struct CheckoutView: View {
                 .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                 .padding(.horizontal, 20)
 
-                Button("Продовжити покупки") {
-                    dismiss()
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .padding(.top, 8)
+                Button("Продовжити покупки") { dismiss() }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .padding(.top, 8)
             }
             .padding(.bottom, 32)
         }

@@ -32,6 +32,13 @@ CREATE TABLE IF NOT EXISTS products (
   vendor          TEXT,
   content_hash    TEXT NOT NULL,
   ai_status       TEXT NOT NULL DEFAULT 'published',  -- published | fallback
+  old_price_cents INTEGER,                          -- "was" price for discounts
+  rating_avg      REAL NOT NULL DEFAULT 0,
+  rating_count    INTEGER NOT NULL DEFAULT 0,
+  title_norm      TEXT,                             -- Unicode-lowercased search columns
+  description_norm TEXT,
+  category_norm   TEXT,
+  brand_norm      TEXT,
   ai_meta_json    TEXT NOT NULL DEFAULT '{}',
   created_at      TEXT NOT NULL,
   updated_at      TEXT NOT NULL,
@@ -63,6 +70,9 @@ CREATE TABLE IF NOT EXISTS orders (
   id              TEXT PRIMARY KEY,
   client_order_id TEXT UNIQUE,
   customer_json   TEXT NOT NULL,
+  phone_norm      TEXT,                            -- +380XXXXXXXXX for order history
+  ttn             TEXT,                            -- Nova Poshta waybill
+  ttn_status      TEXT,
   total_cents     INTEGER NOT NULL,
   currency        TEXT NOT NULL DEFAULT 'UAH',
   status          TEXT NOT NULL,           -- routed | partially_routed | failed
@@ -113,3 +123,16 @@ CREATE TABLE IF NOT EXISTS settings (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+-- ── Build 10: search, reviews, promos, delivery ───────────────────────────
+CREATE TABLE IF NOT EXISTS reviews (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  product_id  TEXT NOT NULL,
+  author      TEXT NOT NULL,
+  rating      INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+  text        TEXT NOT NULL,
+  status      TEXT NOT NULL,          -- published | rejected
+  reason      TEXT,
+  created_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_reviews_product ON reviews(product_id, status);

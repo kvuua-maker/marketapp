@@ -1,4 +1,5 @@
 import { transaction, run, get, setSetting } from '../db/database.js';
+import { norm } from '../domain/normalize.js';
 
 const DEFAULT_BATCH_SIZE = 96;
 
@@ -8,12 +9,14 @@ function upsertProduct(db, record, contentHashValue) {
     db,
     `INSERT INTO products (
        id, supplier_id, external_id, title, description, short_description, image_url, images_json,
-       category, category_raw, cost_cents, price_cents, margin_percent, currency, stock, product_url,
-       vendor, content_hash, ai_status, ai_meta_json, created_at, updated_at
+       category, category_raw, cost_cents, price_cents, old_price_cents, margin_percent, currency, stock,
+       product_url, vendor, content_hash, ai_status, ai_meta_json,
+       title_norm, description_norm, category_norm, brand_norm, created_at, updated_at
      ) VALUES (
        :id, :supplierId, :externalId, :title, :description, :shortDescription, :imageUrl, :imagesJson,
-       :category, :categoryRaw, :costCents, :priceCents, :marginPercent, :currency, :stock, :productUrl,
-       :vendor, :contentHash, :aiStatus, :aiMetaJson, :now, :now
+       :category, :categoryRaw, :costCents, :priceCents, :oldPriceCents, :marginPercent, :currency, :stock,
+       :productUrl, :vendor, :contentHash, :aiStatus, :aiMetaJson,
+       :titleNorm, :descriptionNorm, :categoryNorm, :brandNorm, :now, :now
      )
      ON CONFLICT(supplier_id, external_id) DO UPDATE SET
        title = excluded.title,
@@ -25,6 +28,7 @@ function upsertProduct(db, record, contentHashValue) {
        category_raw = excluded.category_raw,
        cost_cents = excluded.cost_cents,
        price_cents = excluded.price_cents,
+       old_price_cents = excluded.old_price_cents,
        margin_percent = excluded.margin_percent,
        currency = excluded.currency,
        stock = excluded.stock,
@@ -33,6 +37,10 @@ function upsertProduct(db, record, contentHashValue) {
        content_hash = excluded.content_hash,
        ai_status = excluded.ai_status,
        ai_meta_json = excluded.ai_meta_json,
+       title_norm = excluded.title_norm,
+       description_norm = excluded.description_norm,
+       category_norm = excluded.category_norm,
+       brand_norm = excluded.brand_norm,
        updated_at = excluded.updated_at`,
     {
       ':id': record.id,
@@ -47,6 +55,7 @@ function upsertProduct(db, record, contentHashValue) {
       ':categoryRaw': record.categoryRaw,
       ':costCents': record.costCents,
       ':priceCents': record.priceCents,
+      ':oldPriceCents': record.oldPriceCents ?? null,
       ':marginPercent': record.marginPercent,
       ':currency': record.currency,
       ':stock': record.stock,
@@ -55,6 +64,10 @@ function upsertProduct(db, record, contentHashValue) {
       ':contentHash': contentHashValue,
       ':aiStatus': record.aiStatus,
       ':aiMetaJson': JSON.stringify(record.aiMeta ?? {}),
+      ':titleNorm': norm(record.title),
+      ':descriptionNorm': norm(record.description),
+      ':categoryNorm': norm(record.category),
+      ':brandNorm': norm(record.vendor || record.categoryRaw || ''),
       ':now': now,
     },
   );

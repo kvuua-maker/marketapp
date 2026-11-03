@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { get, all, run, transaction } from '../db/database.js';
 import { ValidationError, NotFoundError } from '../core/errors.js';
 import { composeSupplierEmail, enqueueOutbox } from './outbox.js';
+import { normPhone } from '../domain/normalize.js';
 
 const PHONE_UA = /^(?:\+?38)?0(\d{9})$/;
 const MAX_QTY_PER_ITEM = 10;
@@ -68,7 +69,7 @@ function loadProducts(db, items) {
  * Creates an order and routes every line to its supplier automatically.
  * No owner interaction: API order or supplier email queued in the outbox.
  */
-export async function createOrder({ db, adapters, config, logger, payload }) {
+export async function createOrder({ db, adapters, config, logger, payload, novaPoshta }) {
   const customer = validateCustomer(payload?.customer);
   const items = validateItems(payload?.items);
   const products = loadProducts(db, items);
@@ -86,14 +87,15 @@ export async function createOrder({ db, adapters, config, logger, payload }) {
   transaction(db, () => {
     run(
       db,
-      `INSERT INTO orders (id, client_order_id, customer_json, total_cents, currency, status, created_at)
-       VALUES (?, ?, ?, ?, 'UAH', 'routing', ?)`,
+      `INSERT INTO orders (id, client_order_id, customer_json, phone_norm, total_cents, currency, status, created_at)
+       VALUES (?, ?, ?, ?, ?, 'UAH', 'routing', ?)`,
       {
         1: orderId,
         2: payload?.clientOrderId ? String(payload.clientOrderId) : null,
         3: JSON.stringify(customer),
-        4: totalCents,
-        5: now,
+        4: normPhone(customer.phone),
+        5: totalCents,
+        6: now,
       },
     );
 
@@ -179,12 +181,31 @@ export async function createOrder({ db, adapters, config, logger, payload }) {
   run(db, 'UPDATE orders SET status = ? WHERE id = ?', { 1: orderStatus, 2: orderId });
   logger.info('order created', { orderId, totalCents, suppliers: routed.length, status: orderStatus });
 
+  // Logistics never blocks the order: a missing/failed waybill is recorded, not thrown.
+  let ttn = null;
+  if (novaPoshta?.configured) {
+    try {
+      const waybill = await novaPoshta.createWaybill({
+        order: { id: orderId },
+        customer,
+        items: products.map((product) => ({ qty: product.qty })),
+        totalCents,
+      });
+      ttn = waybill?.ttn ?? null;
+      run(db, 'UPDATE orders SET ttn = ?, ttn_status = ? WHERE id = ?', [ttn, ttn ? 'created' : 'pending', orderId]);
+    } catch (error) {
+      run(db, 'UPDATE orders SET ttn_status = ? WHERE id = ?', ['failed', orderId]);
+      logger.warn('nova poshta waybill failed', { orderId, error: error.message });
+    }
+  }
+
   return {
     orderId,
     status: orderStatus,
     totalCents,
     currency: 'UAH',
     payment: 'cod',
+    ttn,
     suppliers: routed,
     items: products.map((product) => ({
       productId: product.id,

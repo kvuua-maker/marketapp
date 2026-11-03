@@ -1,6 +1,7 @@
 import { openDatabase, run } from '../src/db/database.js';
 import { config } from '../src/config.js';
 import { createLogger } from '../src/core/logger.js';
+import { norm } from '../src/domain/normalize.js';
 
 export const logger = createLogger({ test: true, level: 'silent' });
 
@@ -35,15 +36,23 @@ export function insertProduct(db, overrides = {}) {
     ...overrides,
   };
 
+  const params = Object.fromEntries(Object.entries(product).map(([key, value]) => [`:${key}`, value]));
+  params[':title_norm'] = norm(product.title);
+  params[':description_norm'] = norm(product.description);
+  params[':category_norm'] = norm(product.category);
+  params[':brand_norm'] = norm(product.vendor || product.category_raw || '');
+
   run(
     db,
     `INSERT INTO products (id, supplier_id, external_id, title, description, short_description, image_url,
       images_json, category, category_raw, cost_cents, price_cents, margin_percent, currency, stock,
-      product_url, vendor, content_hash, ai_status, ai_meta_json, created_at, updated_at)
+      product_url, vendor, content_hash, ai_status, ai_meta_json,
+      title_norm, description_norm, category_norm, brand_norm, created_at, updated_at)
      VALUES (:id, :supplier_id, :external_id, :title, :description, :short_description, :image_url,
       :images_json, :category, :category_raw, :cost_cents, :price_cents, :margin_percent, :currency, :stock,
-      :product_url, :vendor, :content_hash, :ai_status, :ai_meta_json, :created_at, :updated_at)`,
-    Object.fromEntries(Object.entries(product).map(([key, value]) => [`:${key}`, value])),
+      :product_url, :vendor, :content_hash, :ai_status, :ai_meta_json,
+      :title_norm, :description_norm, :category_norm, :brand_norm, :created_at, :updated_at)`,
+    params,
   );
   return product;
 }

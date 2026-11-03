@@ -1,9 +1,13 @@
 import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
-import { all, get } from '../db/database.js';
-import { AppError, NotFoundError, toPublicError } from '../core/errors.js';
+import { all, get, run } from '../db/database.js';
+import { AppError, NotFoundError, ValidationError, toPublicError } from '../core/errors.js';
 import { createOrder } from '../orders/router.js';
 import { getOrder } from '../orders/outbox.js';
+import { norm, normPhone } from '../domain/normalize.js';
+import { moderateReview } from '../services/reviewModerator.js';
+import { handleImageProxy } from '../services/imageProxy.js';
+import { NovaPoshtaService } from '../services/novaPoshta.js';
 
 const MAX_BODY_BYTES = 256 * 1024;
 
@@ -54,22 +58,27 @@ function safeJson(value, fallback) {
   }
 }
 
+/** List payload: deliberately without the full description (kept for the detail screen). */
 export function toApiProduct(row) {
   const images = safeJson(row.images_json, [row.image_url]).filter(Boolean);
+  const oldPrice = Number(row.old_price_cents) > Number(row.price_cents) ? Number(row.old_price_cents) : null;
   return {
     id: row.id,
     title: row.title,
     shortDescription: row.short_description,
-    description: row.description,
     imageUrl: row.image_url,
-    images: images.length > 0 ? images : [row.image_url],
+    images: (images.length > 0 ? images : [row.image_url]).slice(0, 6),
     priceCents: row.price_cents,
+    oldPriceCents: oldPrice,
+    discountPercent: oldPrice ? Math.round((1 - row.price_cents / oldPrice) * 100) : 0,
     currency: row.currency,
     category: row.category,
     stock: row.stock,
     vendor: row.vendor,
     supplierId: row.supplier_id,
     productUrl: row.product_url,
+    rating: Number(row.rating_avg ?? 0),
+    ratingCount: Number(row.rating_count ?? 0),
   };
 }
 
@@ -78,35 +87,79 @@ function parseListQuery(searchParams) {
   const offset = Math.max(Number.parseInt(searchParams.get('offset') ?? '0', 10) || 0, 0);
   const q = (searchParams.get('q') ?? '').trim().slice(0, 120);
   const category = (searchParams.get('category') ?? '').trim().slice(0, 80);
-  const sort = searchParams.get('sort') ?? 'new';
-  return { limit, offset, q, category, sort };
+  const brand = (searchParams.get('brand') ?? '').trim().slice(0, 80);
+  const ids = (searchParams.get('ids') ?? '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .slice(0, 60);
+  const sort = searchParams.get('sort') ?? 'relevance';
+  const includeOutOfStock = ['1', 'true', 'yes'].includes(String(searchParams.get('include_out_of_stock') ?? ''));
+  return { limit, offset, q, category, brand, ids, sort, includeOutOfStock };
 }
 
-function buildProductsQuery({ limit, offset, q, category, sort }) {
+function buildProductsQuery(query) {
   const where = [];
   const params = {};
-  if (q) {
-    where.push('(title LIKE :q OR description LIKE :q)');
-    params[':q'] = `%${q.replace(/[%_]/g, '')}%`;
-  }
-  if (category && category !== 'Усі') {
-    where.push('category = :category');
-    params[':category'] = category;
-  }
-  const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
-  const orderSql = {
-    price_asc: 'price_cents ASC',
-    price_desc: 'price_cents DESC',
-    new: 'updated_at DESC',
-  }[sort] ?? 'updated_at DESC';
+  const normalisedQuery = norm(query.q);
 
-  params[':limit'] = limit;
-  params[':offset'] = offset;
+  if (query.ids.length > 0) {
+    where.push(`p.id IN (${query.ids.map((_, index) => `:id${index}`).join(',')})`);
+    query.ids.forEach((id, index) => {
+      params[`:id${index}`] = id;
+    });
+  }
+  if (normalisedQuery) {
+    where.push('(p.title_norm LIKE :q OR p.description_norm LIKE :q OR p.category_norm LIKE :q OR p.brand_norm LIKE :q)');
+    params[':q'] = `%${normalisedQuery}%`;
+  }
+  if (query.category && query.category !== 'Усі') {
+    where.push('p.category = :category');
+    params[':category'] = query.category;
+  }
+  if (query.brand) {
+    where.push('p.brand_norm = :brand');
+    params[':brand'] = norm(query.brand);
+  }
+  if (!query.includeOutOfStock) {
+    where.push('p.stock > 0');
+  }
+
+  const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
+
+  const sortSql =
+    {
+      price_asc: 'p.price_cents ASC',
+      price_desc: 'p.price_cents DESC',
+      new: 'p.updated_at DESC',
+      discount: '(COALESCE(p.old_price_cents, 0) - p.price_cents) DESC',
+    }[query.sort] ?? 'p.updated_at DESC';
+
+  // Relevance: title hits first, then brand/category hits, then description hits.
+  const orderSql = normalisedQuery
+    ? `CASE
+         WHEN p.title_norm LIKE :q THEN 0
+         WHEN p.brand_norm LIKE :q OR p.category_norm LIKE :q THEN 1
+         ELSE 2
+       END, ${sortSql}`
+    : sortSql;
+
+  params[':limit'] = query.limit;
+  params[':offset'] = query.offset;
   return { whereSql, orderSql, params };
 }
 
 export function createAppServer({ db, adapters, ai, config, logger, syncTrigger }) {
   const adapterById = new Map(adapters.map((adapter) => [adapter.id, adapter]));
+  const novaPoshta = new NovaPoshtaService({
+    apiKey: config.delivery.novaPoshtaApiKey,
+    senderRef: config.delivery.novaPoshtaSender,
+    senderContactRef: config.delivery.novaPoshtaContact,
+    senderPhone: config.delivery.novaPoshtaPhone,
+    senderCityRef: config.delivery.novaPoshtaCity,
+    senderWarehouseRef: config.delivery.novaPoshtaWarehouse,
+    logger: logger.child({ service: 'nova-poshta' }),
+  });
 
   const server = createServer(async (req, res) => {
     const startedAt = Date.now();
@@ -124,27 +177,49 @@ export function createAppServer({ db, adapters, ai, config, logger, syncTrigger 
     }
 
     try {
+      if (req.method === 'GET' && path === '/v1/img') {
+        await handleImageProxy(req, res, url, { config, logger });
+        return;
+      }
+
       if (req.method === 'GET' && path === '/') {
         sendJson(res, 200, {
           service: 'marketapp',
-          version: '1.0.0',
-          endpoints: ['/v1/health', '/v1/categories', '/v1/products', '/v1/products/:id', '/v1/orders'],
+          version: '1.1.0',
+          endpoints: [
+            '/v1/health',
+            '/v1/categories',
+            '/v1/brands',
+            '/v1/products',
+            '/v1/products/:id',
+            '/v1/products/:id/similar',
+            '/v1/products/:id/reviews',
+            '/v1/promotions',
+            '/v1/orders',
+            '/v1/orders/:id',
+            '/v1/img',
+          ],
         });
         return;
       }
 
       if (req.method === 'GET' && path === '/v1/health') {
         const products = get(db, 'SELECT COUNT(*) AS count FROM products')?.count ?? 0;
+        const inStock = get(db, 'SELECT COUNT(*) AS count FROM products WHERE stock > 0')?.count ?? 0;
         const suppliers = all(db, 'SELECT id, name, enabled FROM suppliers ORDER BY id').map((supplier) => {
-          const lastRun = get(db, 'SELECT status, finished_at FROM sync_runs WHERE supplier_id = ? ORDER BY id DESC LIMIT 1', {
-            1: supplier.id,
-          });
+          const lastRun = get(
+            db,
+            'SELECT status, finished_at FROM sync_runs WHERE supplier_id = ? ORDER BY id DESC LIMIT 1',
+            [supplier.id],
+          );
           return { ...supplier, lastSync: lastRun?.finished_at ?? null, lastStatus: lastRun?.status ?? null };
         });
         sendJson(res, 200, {
           status: 'ok',
           products,
+          inStock,
           ai: { enabled: ai.enabled, model: ai.enabled ? config.ai.model : null },
+          delivery: { novaPoshta: novaPoshta.configured },
           suppliers,
           time: new Date().toISOString(),
         });
@@ -155,10 +230,22 @@ export function createAppServer({ db, adapters, ai, config, logger, syncTrigger 
         const rows = all(
           db,
           `SELECT category AS name, COUNT(*) AS count
-           FROM products GROUP BY category ORDER BY count DESC, name ASC`,
+           FROM products WHERE stock > 0
+           GROUP BY category ORDER BY count DESC, name ASC`,
         );
         const total = rows.reduce((sum, row) => sum + row.count, 0);
         sendJson(res, 200, { total, items: rows }, { 'cache-control': 'public, max-age=120' });
+        return;
+      }
+
+      if (req.method === 'GET' && path === '/v1/brands') {
+        const rows = all(
+          db,
+          `SELECT vendor AS name, COUNT(*) AS count FROM products
+           WHERE stock > 0 AND vendor IS NOT NULL AND vendor <> ''
+           GROUP BY vendor ORDER BY count DESC LIMIT 60`,
+        );
+        sendJson(res, 200, { items: rows }, { 'cache-control': 'public, max-age=300' });
         return;
       }
 
@@ -168,12 +255,9 @@ export function createAppServer({ db, adapters, ai, config, logger, syncTrigger 
         const filterParams = { ...params };
         delete filterParams[':limit'];
         delete filterParams[':offset'];
-        const countRow = get(db, `SELECT COUNT(*) AS count FROM products ${whereSql}`, filterParams);
-        const rows = all(
-          db,
-          `SELECT * FROM products ${whereSql} ORDER BY ${orderSql} LIMIT :limit OFFSET :offset`,
-          params,
-        );
+
+        const countRow = get(db, `SELECT COUNT(*) AS count FROM products p ${whereSql}`, filterParams);
+        const rows = all(db, `SELECT p.* FROM products p ${whereSql} ORDER BY ${orderSql} LIMIT :limit OFFSET :offset`, params);
         sendJson(
           res,
           200,
@@ -183,23 +267,172 @@ export function createAppServer({ db, adapters, ai, config, logger, syncTrigger 
             limit: query.limit,
             offset: query.offset,
           },
-          { 'cache-control': 'public, max-age=60' },
+          { 'cache-control': 'public, max-age=30' },
         );
         return;
       }
 
-      const productMatch = path.match(/^\/v1\/products\/(.+)$/);
+      if (req.method === 'GET' && path === '/v1/promotions') {
+        const limit = Math.min(Math.max(Number.parseInt(url.searchParams.get('limit') ?? '10', 10) || 10, 1), 20);
+        const rows = all(
+          db,
+          `SELECT * FROM products
+           WHERE stock > 0 AND old_price_cents IS NOT NULL AND old_price_cents > price_cents
+           ORDER BY (old_price_cents - price_cents) DESC LIMIT ?`,
+          [limit],
+        );
+        sendJson(res, 200, { items: rows.map(toApiProduct) }, { 'cache-control': 'public, max-age=120' });
+        return;
+      }
+
+      const similarMatch = path.match(/^\/v1\/products\/([^/]+)\/similar$/);
+      if (req.method === 'GET' && similarMatch) {
+        const id = decodeURIComponent(similarMatch[1]);
+        const base = get(db, 'SELECT * FROM products WHERE id = ?', [id]);
+        if (!base) throw new NotFoundError('Товар не знайдено');
+        const limit = Math.min(Math.max(Number.parseInt(url.searchParams.get('limit') ?? '8', 10) || 8, 1), 20);
+        const rows = all(
+          db,
+          `SELECT * FROM products
+           WHERE category = ? AND id <> ? AND stock > 0 AND price_cents BETWEEN ? AND ?
+           ORDER BY ABS(price_cents - ?) ASC LIMIT ?`,
+          [
+            base.category,
+            id,
+            Math.round(base.price_cents * 0.55),
+            Math.round(base.price_cents * 1.8),
+            base.price_cents,
+            limit,
+          ],
+        );
+        sendJson(res, 200, { items: rows.map(toApiProduct) }, { 'cache-control': 'public, max-age=120' });
+        return;
+      }
+
+      const reviewsMatch = path.match(/^\/v1\/products\/([^/]+)\/reviews$/);
+      if (reviewsMatch && (req.method === 'GET' || req.method === 'POST')) {
+        const id = decodeURIComponent(reviewsMatch[1]);
+        const product = get(db, 'SELECT id, title, rating_avg, rating_count FROM products WHERE id = ?', [id]);
+        if (!product) throw new NotFoundError('Товар не знайдено');
+
+        if (req.method === 'GET') {
+          const rows = all(
+            db,
+            `SELECT id, author, rating, text, created_at FROM reviews
+             WHERE product_id = ? AND status = 'published'
+             ORDER BY created_at DESC LIMIT 50`,
+            [id],
+          );
+          sendJson(
+            res,
+            200,
+            {
+              average: Number(product.rating_avg ?? 0),
+              count: Number(product.rating_count ?? 0),
+              items: rows.map((row) => ({
+                id: row.id,
+                author: row.author,
+                rating: row.rating,
+                text: row.text,
+                createdAt: row.created_at,
+              })),
+            },
+            { 'cache-control': 'public, max-age=30' },
+          );
+          return;
+        }
+
+        const body = await readJsonBody(req);
+        const author = String(body?.author ?? '').trim().slice(0, 60);
+        const text = String(body?.text ?? '').trim().slice(0, 1000);
+        const rating = Number.parseInt(body?.rating ?? 0, 10);
+
+        if (text.length < 8) throw new ValidationError('Відгук занадто короткий', [{ field: 'text' }]);
+        if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+          throw new ValidationError('Оцінка має бути від 1 до 5', [{ field: 'rating' }]);
+        }
+
+        const verdict = await moderateReview({ client: ai.client, author, rating, text, logger });
+        if (verdict.status !== 'published') {
+          throw new ValidationError('Відгук не пройшов модерацію', [{ field: 'text', reason: verdict.reason }]);
+        }
+
+        run(
+          db,
+          `INSERT INTO reviews (product_id, author, rating, text, status, reason, created_at)
+           VALUES (?, ?, ?, ?, 'published', ?, ?)`,
+          [id, author, rating, text, verdict.reason, new Date().toISOString()],
+        );
+        run(
+          db,
+          `UPDATE products SET
+             rating_avg = (SELECT AVG(rating) FROM reviews WHERE product_id = ? AND status = 'published'),
+             rating_count = (SELECT COUNT(*) FROM reviews WHERE product_id = ? AND status = 'published')
+           WHERE id = ?`,
+          [id, id, id],
+        );
+        const updated = get(db, 'SELECT rating_avg, rating_count FROM products WHERE id = ?', [id]);
+        sendJson(res, 201, {
+          status: 'published',
+          average: Number(updated.rating_avg ?? 0),
+          count: Number(updated.rating_count ?? 0),
+        });
+        return;
+      }
+
+      const productMatch = path.match(/^\/v1\/products\/([^/]+)$/);
       if (req.method === 'GET' && productMatch) {
         const id = decodeURIComponent(productMatch[1]);
-        const row = get(db, 'SELECT * FROM products WHERE id = ?', { 1: id });
+        const row = get(db, 'SELECT * FROM products WHERE id = ?', [id]);
         if (!row) throw new NotFoundError('Товар не знайдено');
-        sendJson(res, 200, toApiProduct(row), { 'cache-control': 'public, max-age=120' });
+        sendJson(res, 200, { ...toApiProduct(row), description: row.description }, { 'cache-control': 'public, max-age=120' });
+        return;
+      }
+
+      if (req.method === 'GET' && path === '/v1/orders') {
+        const phone = normPhone(url.searchParams.get('phone'));
+        if (!phone) throw new ValidationError('Вкажіть коректний номер телефону', [{ field: 'phone' }]);
+        const orders = all(db, 'SELECT * FROM orders WHERE phone_norm = ? ORDER BY created_at DESC LIMIT 50', [phone]);
+        const items = orders.length
+          ? all(
+              db,
+              `SELECT * FROM order_items WHERE order_id IN (${orders.map(() => '?').join(',')})`,
+              orders.map((order) => order.id),
+            )
+          : [];
+        const byOrder = new Map();
+        for (const item of items) {
+          if (!byOrder.has(item.order_id)) byOrder.set(item.order_id, []);
+          byOrder.get(item.order_id).push(item);
+        }
+        sendJson(
+          res,
+          200,
+          {
+            items: orders.map((order) => ({
+              id: order.id,
+              status: order.status,
+              totalCents: order.total_cents,
+              currency: order.currency,
+              createdAt: order.created_at,
+              ttn: order.ttn ?? null,
+              trackingUrl: NovaPoshtaService.trackingUrl(order.ttn),
+              items: (byOrder.get(order.id) ?? []).map((item) => ({
+                productId: item.product_id,
+                title: item.title_snapshot,
+                qty: item.qty,
+                unitPriceCents: item.unit_price_cents,
+              })),
+            })),
+          },
+          { 'cache-control': 'no-store' },
+        );
         return;
       }
 
       if (req.method === 'POST' && path === '/v1/orders') {
         const payload = await readJsonBody(req);
-        const result = await createOrder({ db, adapters, config, logger, payload });
+        const result = await createOrder({ db, adapters, config, logger, payload, novaPoshta });
         sendJson(res, 201, result, { 'cache-control': 'no-store' });
         return;
       }
@@ -215,6 +448,8 @@ export function createAppServer({ db, adapters, ai, config, logger, syncTrigger 
           totalCents: data.order.total_cents,
           currency: data.order.currency,
           createdAt: data.order.created_at,
+          ttn: data.order.ttn ?? null,
+          trackingUrl: NovaPoshtaService.trackingUrl(data.order.ttn),
           customer: JSON.parse(data.order.customer_json),
           items: data.items.map((item) => ({
             productId: item.product_id,
@@ -253,12 +488,11 @@ export function createAppServer({ db, adapters, ai, config, logger, syncTrigger 
       const remote = req.socket.remoteAddress ?? '';
       const local = remote === '' || remote === '::1' || remote.startsWith('127.') || remote.startsWith('::ffff:127.');
       const entry = { method: req.method, path, status: res.statusCode, ms: Date.now() - startedAt };
-      // Remote traffic is logged at info level so device-side issues are diagnosable.
       if (local) logger.debug('request', entry);
       else logger.info('remote request', { ...entry, remote });
     }
   });
 
   server.keepAliveTimeout = 65_000;
-  return { server, adapterById };
+  return { server, adapterById, novaPoshta };
 }

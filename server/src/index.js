@@ -2,6 +2,8 @@ import process from 'node:process';
 import { config } from './config.js';
 import { createLogger } from './core/logger.js';
 import { openDatabase } from './db/database.js';
+import { migrate } from './db/migrate.js';
+import { initImageProxy } from './services/imageProxy.js';
 import { seedSuppliers } from './db/seed.js';
 import { buildAdapters } from './suppliers/registry.js';
 import { DeepSeekClient } from './ai/deepseek.js';
@@ -15,6 +17,8 @@ const logger = createLogger({ app: 'marketapp' });
 
 async function main() {
   const db = openDatabase(config.dbPath);
+  migrate(db, logger);
+  await initImageProxy(logger);
   const adapters = buildAdapters({ config, logger });
 
   if (adapters.length === 0) {

@@ -27,6 +27,11 @@ export class AveoptAdapter extends SupplierAdapter {
     const costCents = Math.round((priceRaw / 10 ** minorUnit) * 100);
     if (!Number.isFinite(costCents) || costCents <= 0) return null;
 
+    const regularRaw = Number(item?.prices?.regular_price);
+    const oldPriceCents = Number.isFinite(regularRaw) && regularRaw > priceRaw
+      ? Math.round((regularRaw / 10 ** minorUnit) * 100)
+      : null;
+
     const images = (item.images ?? [])
       .map((image) => image?.src)
       .filter((src) => typeof src === 'string' && src.startsWith('http'));
@@ -45,6 +50,7 @@ export class AveoptAdapter extends SupplierAdapter {
       imageUrl: images[0],
       images,
       costCents,
+      oldPriceCents,
       currency: item.prices?.currency_code ?? 'UAH',
       stock,
       categoryRaw: item.categories?.[0]?.name ?? '',

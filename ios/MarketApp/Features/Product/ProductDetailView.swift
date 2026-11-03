@@ -4,54 +4,96 @@ struct ProductDetailView: View {
     let product: Product
 
     @EnvironmentObject private var cart: CartStore
+    @EnvironmentObject private var favorites: FavoritesStore
+
+    @State private var detail: ProductDetail?
+    @State private var similar: [Product] = []
     @State private var selectedImage: String?
     @State private var didAdd = false
+    @State private var showReviewSheet = false
 
     private var activeImage: String {
-        selectedImage ?? product.imageUrl
+        selectedImage ?? detail?.imageUrl ?? product.imageUrl
     }
+
+    private var displayTitle: String { detail?.title ?? product.title }
+    private var displayStock: Int { detail?.stock ?? product.stock }
+    private var priceCents: Int { detail?.priceCents ?? product.priceCents }
+    private var oldPriceCents: Int? { detail?.oldPriceCents ?? product.oldPriceCents }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 gallery
 
-                Text(product.title)
+                Text(displayTitle)
                     .font(.title3.weight(.semibold))
                     .fixedSize(horizontal: false, vertical: true)
 
-                HStack(alignment: .firstTextBaseline) {
-                    Text(Money.uah(cents: product.priceCents))
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(Money.uah(cents: priceCents))
                         .font(.title2.bold())
+                    if let old = oldPriceCents, old > priceCents {
+                        Text(Money.uah(cents: old))
+                            .font(.subheadline)
+                            .strikethrough()
+                            .foregroundStyle(.secondary)
+                    }
                     Spacer()
                     availability
                 }
 
-                if !product.shortDescription.isEmpty {
+                if let detail, detail.ratingCount > 0 {
+                    HStack(spacing: 4) {
+                        ForEach(0..<5, id: \.self) { index in
+                            Image(systemName: Double(index) < detail.rating.rounded() ? "star.fill" : "star")
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                        }
+                        Text(String(format: "%.1f", detail.rating))
+                            .font(.caption.weight(.semibold))
+                        Text("(\(detail.ratingCount) відгуків)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                if let detail, !detail.description.isEmpty {
+                    Text(detail.description)
+                        .font(.callout)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else if !product.shortDescription.isEmpty {
                     Text(product.shortDescription)
-                        .font(.subheadline)
+                        .font(.callout)
                         .foregroundStyle(.secondary)
                 }
 
-                Divider()
-
-                Text(product.description)
-                    .font(.callout)
-                    .fixedSize(horizontal: false, vertical: true)
-
                 deliveryNote
+
+                if !similar.isEmpty {
+                    similarRail
+                }
+
+                ReviewsSection(productId: product.id, showSheet: $showReviewSheet)
             }
             .padding(16)
         }
         .background(Color(.systemBackground))
-        .safeAreaInset(edge: .bottom) { addToCartBar }
+        .safeAreaInset(edge: .bottom) { bottomBar }
         .navigationTitle("Товар")
         .navigationBarTitleDisplayMode(.inline)
+        .task {
+            detail = try? await APIClient.shared.productDetail(id: product.id)
+            similar = (try? await APIClient.shared.similar(id: product.id))?.items ?? []
+        }
+        .sheet(isPresented: $showReviewSheet) {
+            ReviewComposer(productId: product.id, productTitle: displayTitle)
+        }
     }
 
     private var gallery: some View {
         VStack(spacing: 10) {
-            CachedAsyncImage(url: URL(string: activeImage), contentMode: .fit)
+            CachedAsyncImage(url: APIClient.imageURL(activeImage, width: 800), contentMode: .fit)
                 .frame(maxWidth: .infinity)
                 .frame(height: 320)
                 .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
@@ -60,7 +102,7 @@ struct ProductDetailView: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
                         ForEach(product.images.prefix(8), id: \.self) { image in
-                            CachedAsyncImage(url: URL(string: image))
+                            CachedAsyncImage(url: APIClient.imageURL(image, width: 200))
                                 .frame(width: 56, height: 56)
                                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                                 .overlay(
@@ -77,7 +119,7 @@ struct ProductDetailView: View {
 
     @ViewBuilder
     private var availability: some View {
-        if product.isAvailable {
+        if displayStock > 0 {
             Label("В наявності", systemImage: "checkmark.circle.fill")
                 .font(.caption.weight(.medium))
                 .foregroundStyle(.green)
@@ -105,8 +147,47 @@ struct ProductDetailView: View {
         .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
-    private var addToCartBar: some View {
-        VStack(spacing: 8) {
+    private var similarRail: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Схожі товари")
+                .font(.headline)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 12) {
+                    ForEach(similar) { item in
+                        NavigationLink(value: item) {
+                            VStack(alignment: .leading, spacing: 6) {
+                                CachedAsyncImage(url: APIClient.imageURL(item.imageUrl, width: 240))
+                                    .frame(width: 120, height: 120)
+                                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                Text(item.title)
+                                    .font(.caption)
+                                    .lineLimit(2)
+                                    .frame(width: 120, alignment: .leading)
+                                Text(Money.uah(cents: item.priceCents))
+                                    .font(.caption.weight(.bold))
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+    }
+
+    private var bottomBar: some View {
+        HStack(spacing: 10) {
+            Button {
+                favorites.toggle(product.id)
+            } label: {
+                Image(systemName: favorites.contains(product.id) ? "heart.fill" : "heart")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(favorites.contains(product.id) ? .red : .primary)
+                    .frame(width: 44, height: 44)
+                    .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+            .buttonStyle(.plain)
+
             Button {
                 cart.add(product)
                 didAdd = true
@@ -117,7 +198,7 @@ struct ProductDetailView: View {
             } label: {
                 HStack {
                     Image(systemName: didAdd ? "checkmark" : "cart.badge.plus")
-                    Text(didAdd ? "Додано в кошик" : "Додати в кошик")
+                    Text(didAdd ? "Додано в кошик" : "Купити")
                         .fontWeight(.semibold)
                 }
                 .frame(maxWidth: .infinity)
@@ -125,15 +206,10 @@ struct ProductDetailView: View {
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
-            .disabled(!product.isAvailable)
-
-            Text("Оплата при отриманні · Нова Пошта")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+            .disabled(displayStock <= 0)
         }
         .padding(.horizontal, 16)
-        .padding(.top, 10)
-        .padding(.bottom, 8)
+        .padding(.vertical, 10)
         .background(.ultraThinMaterial)
     }
 }

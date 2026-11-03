@@ -53,7 +53,7 @@ struct CartView: View {
 
     private func row(for line: CartStore.Line) -> some View {
         HStack(spacing: 12) {
-            CachedAsyncImage(url: URL(string: line.product.imageUrl))
+            CachedAsyncImage(url: APIClient.imageURL(line.product.imageUrl, width: 160))
                 .frame(width: 64, height: 64)
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
 

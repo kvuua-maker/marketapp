@@ -30,6 +30,17 @@ private struct ServerErrorEnvelope: Decodable {
 struct APIClient {
     static let shared = APIClient()
 
+    /// All supplier photos go through the server-side resizer (2 MB -> ~40 KB).
+    static func imageURL(_ raw: String?, width: Int = 400) -> URL? {
+        guard let raw, !raw.isEmpty else { return nil }
+        var components = URLComponents(url: AppConfig.baseURL.appendingPathComponent("/v1/img"), resolvingAgainstBaseURL: false)
+        components?.queryItems = [
+            URLQueryItem(name: "w", value: String(width)),
+            URLQueryItem(name: "url", value: raw),
+        ]
+        return components?.url
+    }
+
     let baseURL: URL
     private let session: URLSession
     private let decoder = JSONDecoder()
@@ -39,24 +50,41 @@ struct APIClient {
         let configuration = URLSessionConfiguration.default
         configuration.timeoutIntervalForRequest = 20
         configuration.urlCache = URLCache(
-            memoryCapacity: 16 * 1024 * 1024,
-            diskCapacity: 64 * 1024 * 1024,
+            memoryCapacity: 32 * 1024 * 1024,
+            diskCapacity: 256 * 1024 * 1024,
             diskPath: "marketapp-api"
         )
         self.session = URLSession(configuration: configuration)
     }
 
+    // MARK: - Catalog
+
     func categories() async throws -> CategoryPage {
         try await get("/v1/categories")
     }
 
-    func products(category: String?, query: String, offset: Int, limit: Int) async throws -> ProductPage {
+    func brands() async throws -> BrandPage {
+        try await get("/v1/brands")
+    }
+
+    func products(
+        category: String?,
+        query: String,
+        sort: String,
+        includeOutOfStock: Bool,
+        offset: Int,
+        limit: Int
+    ) async throws -> ProductPage {
         var items: [URLQueryItem] = [
             URLQueryItem(name: "limit", value: String(limit)),
             URLQueryItem(name: "offset", value: String(offset)),
+            URLQueryItem(name: "sort", value: sort),
         ]
         if let category, !category.isEmpty {
             items.append(URLQueryItem(name: "category", value: category))
+        }
+        if includeOutOfStock {
+            items.append(URLQueryItem(name: "include_out_of_stock", value: "1"))
         }
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty {
@@ -65,25 +93,73 @@ struct APIClient {
         return try await get("/v1/products", query: items)
     }
 
-    func product(id: String) async throws -> Product {
-        try await get("/v1/products/\(id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id)")
+    func products(ids: [String]) async throws -> ProductList {
+        guard !ids.isEmpty else { return ProductList(items: []) }
+        return try await get("/v1/products", query: [
+            URLQueryItem(name: "ids", value: ids.joined(separator: ",")),
+            URLQueryItem(name: "limit", value: "60"),
+            URLQueryItem(name: "include_out_of_stock", value: "1"),
+        ])
+    }
+
+    func productDetail(id: String) async throws -> ProductDetail {
+        try await get("/v1/products/\(encoded(id))")
+    }
+
+    func similar(id: String) async throws -> ProductList {
+        try await get("/v1/products/\(encoded(id))/similar")
+    }
+
+    func promotions(limit: Int = 10) async throws -> ProductList {
+        try await get("/v1/promotions", query: [URLQueryItem(name: "limit", value: String(limit))])
+    }
+
+    // MARK: - Reviews
+
+    func reviews(productId: String) async throws -> ReviewPage {
+        try await get("/v1/products/\(encoded(productId))/reviews")
+    }
+
+    func submitReview(productId: String, author: String, rating: Int, text: String) async throws -> ReviewResult {
+        try await post(
+            "/v1/products/\(encoded(productId))/reviews",
+            body: ["author": author, "rating": String(rating), "text": text]
+        )
+    }
+
+    // MARK: - Orders
+
+    func orders(phone: String) async throws -> OrderHistoryPage {
+        try await get("/v1/orders", query: [URLQueryItem(name: "phone", value: phone)])
     }
 
     func createOrder(_ request: OrderRequest) async throws -> OrderResponse {
         try await post("/v1/orders", body: request)
     }
 
+    // MARK: - Transport
+
+    private func encoded(_ value: String) -> String {
+        value.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? value
+    }
+
     private func get<T: Decodable>(_ path: String, query: [URLQueryItem] = []) async throws -> T {
-        var components = URLComponents(
-            url: baseURL.appendingPathComponent(path),
-            resolvingAgainstBaseURL: false
-        )
+        var components = URLComponents(url: baseURL.appendingPathComponent(path), resolvingAgainstBaseURL: false)
         if !query.isEmpty { components?.queryItems = query }
         guard let url = components?.url else { throw APIError(message: "Некоректна адреса сервера") }
 
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        return try await send(request)
+    }
+
+    private func post<T: Decodable>(_ path: String, body: [String: String]) async throws -> T {
+        var request = URLRequest(url: baseURL.appendingPathComponent(path))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.httpBody = try JSONEncoder().encode(body)
         return try await send(request)
     }
 

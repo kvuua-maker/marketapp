@@ -4,10 +4,10 @@ import UIKit
 struct RootView: View {
     @StateObject private var cart = CartStore()
     @StateObject private var catalog = CatalogViewModel()
+    @StateObject private var favorites = FavoritesStore()
+    @StateObject private var profile = ProfileStore()
 
     /// Universal app: the device decides the shell, not the size class.
-    /// iPhone keeps TabView even in landscape (wide iPhone would otherwise
-    /// report a regular size class and "turn into" an iPad layout).
     private var isPad: Bool {
         UIDevice.current.userInterfaceIdiom == .pad
     }
@@ -22,18 +22,19 @@ struct RootView: View {
         }
         .environmentObject(cart)
         .environmentObject(catalog)
+        .environmentObject(favorites)
+        .environmentObject(profile)
     }
 }
 
 enum SidebarItem: Hashable {
     case all
     case cart
+    case profile
     case category(String)
 }
 
 /// iPad: full-screen NavigationSplitView with a persistent sidebar.
-/// The catalog always occupies the whole detail area — no floating windows,
-/// no iPhone-sized column in the middle of the screen.
 struct SplitRootView: View {
     @EnvironmentObject private var catalog: CatalogViewModel
     @EnvironmentObject private var cart: CartStore
@@ -50,11 +51,13 @@ struct SplitRootView: View {
                     .badge(cart.count)
                     .tag(SidebarItem.cart)
 
+                Label("Профіль", systemImage: "person.crop.circle")
+                    .tag(SidebarItem.profile)
+
                 Section("Категорії") {
                     ForEach(catalog.categories) { category in
                         HStack(spacing: 8) {
-                            Text(category.name)
-                                .lineLimit(1)
+                            Text(category.name).lineLimit(1)
                             Spacer(minLength: 4)
                             Text("\(category.count)")
                                 .font(.caption)
@@ -70,15 +73,20 @@ struct SplitRootView: View {
             .navigationSplitViewColumnWidth(min: 240, ideal: 300, max: 360)
         } detail: {
             NavigationStack {
-                switch selection ?? .all {
-                case .cart:
-                    CartView()
-                case .category(_), .all:
-                    CatalogView()
+                Group {
+                    switch selection ?? .all {
+                    case .cart:
+                        CartView()
+                    case .profile:
+                        ProfileView()
+                    case .category(_), .all:
+                        CatalogView()
+                    }
                 }
-            }
-            .navigationDestination(for: Product.self) { product in
-                ProductDetailView(product: product)
+                // Must live INSIDE the stack — otherwise NavigationLink does nothing (iPad bug).
+                .navigationDestination(for: Product.self) { product in
+                    ProductDetailView(product: product)
+                }
             }
         }
         .navigationSplitViewStyle(.balanced)
@@ -88,7 +96,7 @@ struct SplitRootView: View {
                 catalog.selectCategory(name)
             case .all:
                 catalog.selectCategory(nil)
-            case .cart:
+            case .cart, .profile:
                 break
             }
         }
@@ -96,9 +104,10 @@ struct SplitRootView: View {
     }
 }
 
-/// iPhone: standard bottom TabView with catalog and cart only.
+/// iPhone: bottom TabView — catalog, cart, profile.
 struct TabRootView: View {
     @EnvironmentObject private var cart: CartStore
+    @EnvironmentObject private var favorites: FavoritesStore
 
     var body: some View {
         TabView {
@@ -115,6 +124,15 @@ struct TabRootView: View {
             }
             .tabItem { Label("Кошик", systemImage: "cart") }
             .badge(cart.count)
+
+            NavigationStack {
+                ProfileView()
+                    .navigationDestination(for: Product.self) { product in
+                        ProductDetailView(product: product)
+                    }
+            }
+            .tabItem { Label("Профіль", systemImage: "person.crop.circle") }
+            .badge(favorites.count)
         }
     }
 }

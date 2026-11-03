@@ -93,6 +93,24 @@ export const config = {
     resendApiKey: process.env.RESEND_API_KEY ?? '',
   },
 
+  images: {
+    // SSRF guard: only these hosts may be proxied through /v1/img.
+    allowedHosts: (process.env.IMAGE_ALLOWED_HOSTS ?? 'www.aveopt.com.ua,aveopt.com.ua')
+      .split(',')
+      .map((host) => host.trim())
+      .filter(Boolean),
+    maxWidth: int(process.env.IMAGE_MAX_WIDTH, 1200),
+  },
+
+  delivery: {
+    novaPoshtaApiKey: process.env.NOVA_POSHTA_API_KEY ?? '',
+    novaPoshtaSender: process.env.NOVA_POSHTA_SENDER ?? '',
+    novaPoshtaContact: process.env.NOVA_POSHTA_CONTACT ?? '',
+    novaPoshtaPhone: process.env.NOVA_POSHTA_PHONE ?? '',
+    novaPoshtaCity: process.env.NOVA_POSHTA_CITY ?? '',
+    novaPoshtaWarehouse: process.env.NOVA_POSHTA_WAREHOUSE ?? '',
+  },
+
   // Optional token for automation endpoints (CI smoke tests, external schedulers).
   internalToken: process.env.INTERNAL_TOKEN ?? '',
 };

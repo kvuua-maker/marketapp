@@ -1,18 +1,9 @@
 import SwiftUI
 
-private struct ContentWidthKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
-    }
-}
-
 struct CatalogView: View {
     @EnvironmentObject private var catalog: CatalogViewModel
     @State private var contentWidth: CGFloat = 0
 
-    /// iPad gets a desktop-grade grid: 4–5 columns across the full screen.
-    /// iPhone stays at 2 columns.
     private var columnCount: Int {
         switch contentWidth {
         case 1000...: return 5
@@ -28,59 +19,86 @@ struct CatalogView: View {
 
     private var imageHeight: CGFloat {
         switch columnCount {
-        case 5: return 165
-        case 4: return 180
-        case 3: return 190
+        case 5: return 150
+        case 4: return 165
+        case 3: return 180
         default: return 150
         }
     }
 
     var body: some View {
         ScrollView {
+            if catalog.searchText.isEmpty && catalog.selectedCategory == nil {
+                PromotionsBanner(items: catalog.promotions)
+            }
+
             LazyVGrid(columns: columns, spacing: 16) {
-                ForEach(catalog.products) { product in
-                    NavigationLink(value: product) {
-                        ProductCard(product: product, imageHeight: imageHeight)
+                if catalog.isInitialLoading {
+                    ForEach(0..<8, id: \.self) { _ in
+                        SkeletonCard(imageHeight: imageHeight)
                     }
-                    .buttonStyle(.plain)
-                    .task { await catalog.loadMore(after: product) }
+                } else {
+                    ForEach(catalog.products) { product in
+                        ProductCard(product: product, imageHeight: imageHeight)
+                            .task { await catalog.loadMore(after: product) }
+                    }
                 }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 14)
             .background(
                 GeometryReader { proxy in
-                    Color.clear.preference(key: ContentWidthKey.self, value: proxy.size.width)
+                    Color.clear.preference(key: CatalogWidthKey.self, value: proxy.size.width)
                 }
             )
 
             if catalog.isLoadingMore {
-                ProgressView()
-                    .padding(.bottom, 24)
+                ProgressView().padding(.bottom, 24)
             }
         }
         .background(Color(.systemGroupedBackground))
-        .onPreferenceChange(ContentWidthKey.self) { width in
+        .onPreferenceChange(CatalogWidthKey.self) { width in
             if width > 0 { contentWidth = width }
         }
         .navigationTitle(catalog.selectedCategory ?? "Каталог")
         .navigationBarTitleDisplayMode(.automatic)
-        .searchable(text: $catalog.searchText, prompt: "Пошук товарів")
-        .onChange(of: catalog.searchText) { _, _ in
-            catalog.searchChanged()
+        .searchable(text: $catalog.searchText, prompt: "Пошук: назва, бренд, опис")
+        .onChange(of: catalog.searchText) { _, _ in catalog.searchChanged() }
+        .refreshable { await catalog.reload() }
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    Picker(
+                        "Сортування",
+                        selection: Binding(
+                            get: { catalog.sort },
+                            set: { catalog.applySort($0) }
+                        )
+                    ) {
+                        ForEach(SortOption.allCases) { option in
+                            Text(option.title).tag(option)
+                        }
+                    }
+
+                    Toggle(
+                        "Показати все (з відсутніми)",
+                        isOn: Binding(
+                            get: { catalog.includeOutOfStock },
+                            set: { _ in catalog.toggleOutOfStock() }
+                        )
+                    )
+                } label: {
+                    Image(systemName: "line.3.horizontal.decrease.circle")
+                }
+            }
         }
-        .refreshable {
-            await catalog.reload()
-        }
-        .overlay { emptyState }
+        .overlay { overlayState }
         .task { await catalog.bootstrap() }
     }
 
     @ViewBuilder
-    private var emptyState: some View {
-        if catalog.isLoading && catalog.products.isEmpty {
-            ProgressView("Завантаження…")
-        } else if let error = catalog.errorMessage, catalog.products.isEmpty {
+    private var overlayState: some View {
+        if let error = catalog.errorMessage, catalog.products.isEmpty {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     Label("Немає звʼязку із сервером", systemImage: "wifi.exclamationmark")
@@ -105,12 +123,19 @@ struct CatalogView: View {
                 .padding(20)
                 .frame(maxWidth: 560, alignment: .leading)
             }
-        } else if catalog.products.isEmpty {
+        } else if !catalog.isLoading && catalog.products.isEmpty {
             ContentUnavailableView(
                 "Нічого не знайдено",
                 systemImage: "magnifyingglass",
-                description: Text("Спробуйте інший запит або категорію")
+                description: Text("Спробуйте інший запит або увімкніть «Показати все»")
             )
         }
+    }
+}
+
+private struct CatalogWidthKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
     }
 }

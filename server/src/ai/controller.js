@@ -1,6 +1,7 @@
 import { CANONICAL_CATEGORIES, coerceCategory } from '../domain/categories.js';
 import { fallbackEnrich } from './fallback.js';
 import { contentHash, firstSentences, normalizeTitle } from '../domain/text.js';
+import { guessBrand } from '../domain/brand.js';
 import { retailPrice } from '../domain/pricing.js';
 import { all, run } from '../db/database.js';
 
@@ -128,6 +129,14 @@ export class AIController {
 
   /** Enriches one validated product into a storefront record (no DB writes). */
   buildRecord(raw, ai, marginPercent) {
+    const oldPriceCents =
+      Number.isFinite(raw.oldPriceCents) && raw.oldPriceCents > raw.costCents
+        ? retailPrice(raw.oldPriceCents, marginPercent, {
+            rounding: this.config.pricing.rounding,
+            minMarginPercent: this.config.pricing.minMarginPercent,
+          }).priceCents
+        : null;
+
     const pricing = retailPrice(raw.costCents, marginPercent, {
       rounding: this.config.pricing.rounding,
       minMarginPercent: this.config.pricing.minMarginPercent,
@@ -145,11 +154,12 @@ export class AIController {
       categoryRaw: raw.categoryRaw ?? '',
       costCents: raw.costCents,
       priceCents: pricing.priceCents,
+      oldPriceCents,
       marginPercent: pricing.marginPercent,
       currency: raw.currency ?? 'UAH',
       stock: raw.stock ?? 0,
       productUrl: raw.productUrl ?? '',
-      vendor: raw.vendor ?? '',
+      vendor: raw.vendor || guessBrand(raw.title),
       aiStatus: ai.source === 'deepseek' ? 'published' : 'fallback',
       aiMeta: { source: ai.source, language: ai.language ?? 'unknown' },
     };
