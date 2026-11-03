@@ -1,13 +1,38 @@
 import SwiftUI
 import UIKit
 
+/// Shared navigation state so buttons like "Перейти до каталогу" really work.
+@MainActor
+final class AppRouter: ObservableObject {
+    enum Tab: Hashable {
+        case catalog
+        case cart
+        case profile
+    }
+
+    @Published var tab: Tab = .catalog
+    @Published var sidebar: SidebarItem? = .all
+
+    func goToCatalog() {
+        tab = .catalog
+        sidebar = .all
+    }
+}
+
+enum SidebarItem: Hashable {
+    case all
+    case cart
+    case profile
+    case category(String)
+}
+
 struct RootView: View {
     @StateObject private var cart = CartStore()
     @StateObject private var catalog = CatalogViewModel()
     @StateObject private var favorites = FavoritesStore()
     @StateObject private var profile = ProfileStore()
+    @StateObject private var router = AppRouter()
 
-    /// Universal app: the device decides the shell, not the size class.
     private var isPad: Bool {
         UIDevice.current.userInterfaceIdiom == .pad
     }
@@ -24,26 +49,20 @@ struct RootView: View {
         .environmentObject(catalog)
         .environmentObject(favorites)
         .environmentObject(profile)
+        .environmentObject(router)
+        .preferredColorScheme(profile.theme.colorScheme)
     }
 }
 
-enum SidebarItem: Hashable {
-    case all
-    case cart
-    case profile
-    case category(String)
-}
-
-/// iPad: full-screen NavigationSplitView with a persistent sidebar.
+/// iPad: full-screen NavigationSplitView.
 struct SplitRootView: View {
     @EnvironmentObject private var catalog: CatalogViewModel
     @EnvironmentObject private var cart: CartStore
-
-    @State private var selection: SidebarItem? = .all
+    @EnvironmentObject private var router: AppRouter
 
     var body: some View {
         NavigationSplitView {
-            List(selection: $selection) {
+            List(selection: $router.sidebar) {
                 Label("Усі товари", systemImage: "square.grid.2x2")
                     .tag(SidebarItem.all)
 
@@ -74,7 +93,7 @@ struct SplitRootView: View {
         } detail: {
             NavigationStack {
                 Group {
-                    switch selection ?? .all {
+                    switch router.sidebar ?? .all {
                     case .cart:
                         CartView()
                     case .profile:
@@ -83,14 +102,13 @@ struct SplitRootView: View {
                         CatalogView()
                     }
                 }
-                // Must live INSIDE the stack — otherwise NavigationLink does nothing (iPad bug).
                 .navigationDestination(for: Product.self) { product in
                     ProductDetailView(product: product)
                 }
             }
         }
         .navigationSplitViewStyle(.balanced)
-        .onChange(of: selection) { _, newValue in
+        .onChange(of: router.sidebar) { _, newValue in
             switch newValue ?? .all {
             case .category(let name):
                 catalog.selectCategory(name)
@@ -104,13 +122,14 @@ struct SplitRootView: View {
     }
 }
 
-/// iPhone: bottom TabView — catalog, cart, profile.
+/// iPhone: TabView (catalog, cart, profile).
 struct TabRootView: View {
     @EnvironmentObject private var cart: CartStore
     @EnvironmentObject private var favorites: FavoritesStore
+    @EnvironmentObject private var router: AppRouter
 
     var body: some View {
-        TabView {
+        TabView(selection: $router.tab) {
             NavigationStack {
                 CatalogView()
                     .navigationDestination(for: Product.self) { product in
@@ -118,12 +137,14 @@ struct TabRootView: View {
                     }
             }
             .tabItem { Label("Каталог", systemImage: "square.grid.2x2") }
+            .tag(AppRouter.Tab.catalog)
 
             NavigationStack {
                 CartView()
             }
             .tabItem { Label("Кошик", systemImage: "cart") }
             .badge(cart.count)
+            .tag(AppRouter.Tab.cart)
 
             NavigationStack {
                 ProfileView()
@@ -133,6 +154,7 @@ struct TabRootView: View {
             }
             .tabItem { Label("Профіль", systemImage: "person.crop.circle") }
             .badge(favorites.count)
+            .tag(AppRouter.Tab.profile)
         }
     }
 }

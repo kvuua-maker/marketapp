@@ -2,14 +2,17 @@ import SwiftUI
 
 struct CartView: View {
     @EnvironmentObject private var cart: CartStore
+    @EnvironmentObject private var router: AppRouter
 
     var body: some View {
         Group {
             if cart.isEmpty {
-                ContentUnavailableView(
-                    "Кошик порожній",
+                EmptyStateView(
+                    title: "Кошик порожній",
                     systemImage: "cart",
-                    description: Text("Додайте товари з каталогу")
+                    message: "Додайте товари з каталогу — оплата при отриманні.",
+                    actionTitle: "Перейти до каталогу",
+                    action: { router.goToCatalog() }
                 )
             } else {
                 content
@@ -24,30 +27,55 @@ struct CartView: View {
             Section {
                 ForEach(cart.lines) { line in
                     row(for: line)
-                }
-                .onDelete { indexSet in
-                    let ids = indexSet.map { cart.lines[$0].id }
-                    ids.forEach { cart.remove(id: $0) }
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            Button(role: .destructive) {
+                                cart.remove(id: line.id)
+                            } label: {
+                                Label("Видалити", systemImage: "trash")
+                            }
+                        }
                 }
             }
 
             Section {
                 HStack {
+                    Text("Товарів")
+                    Spacer()
+                    Text("\(cart.count) шт.")
+                        .foregroundStyle(.secondary)
+                }
+                HStack {
+                    Text("Доставка")
+                    Spacer()
+                    Text("за тарифом Нової Пошти")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                HStack {
                     Text("Разом")
+                        .font(.headline)
                     Spacer()
                     Text(Money.uah(cents: cart.totalCents))
                         .font(.headline)
                 }
-
-                NavigationLink {
-                    CheckoutView()
-                } label: {
-                    Label("Оформити замовлення", systemImage: "shippingbox")
-                        .fontWeight(.semibold)
-                }
             } footer: {
                 Text("Оплата при отриманні у відділенні Нової Пошти. Онлайн-оплати немає.")
             }
+        }
+        .safeAreaInset(edge: .bottom) {
+            NavigationLink {
+                CheckoutView()
+            } label: {
+                Text("Оформити замовлення")
+                    .fontWeight(.semibold)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .padding(.horizontal, Theme.screenPadding)
+            .padding(.vertical, 10)
+            .background(.ultraThinMaterial)
         }
     }
 
@@ -67,21 +95,42 @@ struct CartView: View {
                     .foregroundStyle(.secondary)
             }
 
-            Spacer(minLength: 8)
+            Spacer(minLength: 6)
 
-            Stepper(
-                value: Binding(
-                    get: { line.qty },
-                    set: { cart.setQty($0, for: line.id) }
-                ),
-                in: 1...10
-            ) {
-                Text("\(line.qty) шт.")
-                    .font(.caption.weight(.medium))
-                    .monospacedDigit()
+            VStack(spacing: 6) {
+                HStack(spacing: 12) {
+                    Button {
+                        cart.setQty(line.qty - 1, for: line.id)
+                    } label: {
+                        Image(systemName: "minus.circle")
+                            .font(.title3)
+                    }
+                    .buttonStyle(.plain)
+
+                    Text("\(line.qty)")
+                        .font(.subheadline.weight(.semibold))
+                        .monospacedDigit()
+                        .frame(minWidth: 18)
+
+                    Button {
+                        cart.setQty(line.qty + 1, for: line.id)
+                    } label: {
+                        Image(systemName: "plus.circle")
+                            .font(.title3)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(line.qty >= 10)
+                }
+
+                Button(role: .destructive) {
+                    cart.remove(id: line.id)
+                } label: {
+                    Image(systemName: "trash")
+                        .font(.caption)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.red)
             }
-            .labelsHidden()
-            .fixedSize()
         }
         .padding(.vertical, 4)
     }

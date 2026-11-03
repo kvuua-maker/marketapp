@@ -136,3 +136,14 @@ CREATE TABLE IF NOT EXISTS reviews (
   created_at  TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_reviews_product ON reviews(product_id, status);
+
+-- ── Analytics events (owner reporting) ───────────────────────────────────
+CREATE TABLE IF NOT EXISTS events (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  name        TEXT NOT NULL,          -- product_view | add_to_cart | order_created
+  product_id  TEXT,
+  order_id    TEXT,
+  meta_json   TEXT NOT NULL DEFAULT '{}',
+  created_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_events_name ON events(name, created_at);

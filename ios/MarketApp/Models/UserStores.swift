@@ -24,20 +24,57 @@ final class FavoritesStore: ObservableObject {
     var count: Int { ids.count }
 }
 
-/// Phone number is the account identity in this app (no passwords, no sign-up).
+/// Phone number is the account identity (no passwords, no sign-up).
+/// Also owns the appearance setting and saved delivery addresses.
 @MainActor
 final class ProfileStore: ObservableObject {
     @Published var phone: String {
-        didSet { UserDefaults.standard.set(phone, forKey: key) }
+        didSet { UserDefaults.standard.set(phone, forKey: Keys.phone) }
     }
 
-    private let key = "marketapp.phone"
+    @Published var theme: ThemeMode {
+        didSet { UserDefaults.standard.set(theme.rawValue, forKey: Keys.theme) }
+    }
+
+    @Published var addresses: [SavedAddress] {
+        didSet { persistAddresses() }
+    }
+
+    private enum Keys {
+        static let phone = "marketapp.phone"
+        static let theme = "marketapp.theme"
+        static let addresses = "marketapp.addresses"
+    }
 
     init() {
-        phone = UserDefaults.standard.string(forKey: key) ?? ""
+        let defaults = UserDefaults.standard
+        phone = defaults.string(forKey: Keys.phone) ?? ""
+        theme = ThemeMode(rawValue: defaults.string(forKey: Keys.theme) ?? "") ?? .system
+        if let data = defaults.data(forKey: Keys.addresses),
+           let decoded = try? JSONDecoder().decode([SavedAddress].self, from: data) {
+            addresses = decoded
+        } else {
+            addresses = []
+        }
     }
 
     var isValidPhone: Bool {
         phone.filter(\.isNumber).count >= 10
+    }
+
+    func addAddress(label: String, city: String, branch: String) {
+        guard !city.isEmpty, !branch.isEmpty else { return }
+        let address = SavedAddress(label: label.isEmpty ? city : label, city: city, branch: branch)
+        addresses.append(address)
+        persistAddresses()
+    }
+
+    func removeAddress(_ address: SavedAddress) {
+        addresses.removeAll { $0.id == address.id }
+    }
+
+    private func persistAddresses() {
+        guard let data = try? JSONEncoder().encode(addresses) else { return }
+        UserDefaults.standard.set(data, forKey: Keys.addresses)
     }
 }

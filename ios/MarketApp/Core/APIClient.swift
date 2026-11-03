@@ -67,30 +67,54 @@ struct APIClient {
         try await get("/v1/brands")
     }
 
-    func products(
-        category: String?,
-        query: String,
-        sort: String,
-        includeOutOfStock: Bool,
-        offset: Int,
-        limit: Int
-    ) async throws -> ProductPage {
+    func products(_ query: ProductQuery) async throws -> ProductPage {
         var items: [URLQueryItem] = [
-            URLQueryItem(name: "limit", value: String(limit)),
-            URLQueryItem(name: "offset", value: String(offset)),
-            URLQueryItem(name: "sort", value: sort),
+            URLQueryItem(name: "limit", value: String(query.limit)),
+            URLQueryItem(name: "offset", value: String(query.offset)),
+            URLQueryItem(name: "sort", value: query.sort),
         ]
-        if let category, !category.isEmpty {
+        if let category = query.category, !category.isEmpty {
             items.append(URLQueryItem(name: "category", value: category))
         }
-        if includeOutOfStock {
-            items.append(URLQueryItem(name: "include_out_of_stock", value: "1"))
-        }
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = query.search.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty {
             items.append(URLQueryItem(name: "q", value: trimmed))
         }
+        if query.includeOutOfStock {
+            items.append(URLQueryItem(name: "include_out_of_stock", value: "1"))
+        }
+        if query.onlyInStock {
+            items.append(URLQueryItem(name: "in_stock", value: "1"))
+        }
+        if let min = query.minPriceCents {
+            items.append(URLQueryItem(name: "min_price", value: String(min)))
+        }
+        if let max = query.maxPriceCents {
+            items.append(URLQueryItem(name: "max_price", value: String(max)))
+        }
+        if !query.brands.isEmpty {
+            items.append(URLQueryItem(name: "brand", value: query.brands.joined(separator: ",")))
+        }
         return try await get("/v1/products", query: items)
+    }
+
+    func filters() async throws -> FilterOptions {
+        try await get("/v1/filters")
+    }
+
+    func suggest(_ query: String) async throws -> SuggestionPage {
+        try await get("/v1/search/suggest", query: [URLQueryItem(name: "q", value: query)])
+    }
+
+    func cities(_ query: String) async throws -> CityPage {
+        try await get("/v1/np/cities", query: [URLQueryItem(name: "q", value: query)])
+    }
+
+    func warehouses(city: String, query: String) async throws -> WarehousePage {
+        try await get("/v1/np/warehouses", query: [
+            URLQueryItem(name: "city", value: city),
+            URLQueryItem(name: "q", value: query),
+        ])
     }
 
     func products(ids: [String]) async throws -> ProductList {

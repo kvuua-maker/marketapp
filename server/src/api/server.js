@@ -8,6 +8,7 @@ import { norm, normPhone } from '../domain/normalize.js';
 import { moderateReview } from '../services/reviewModerator.js';
 import { handleImageProxy } from '../services/imageProxy.js';
 import { NovaPoshtaService } from '../services/novaPoshta.js';
+import { searchCities } from '../services/uaCities.js';
 
 const MAX_BODY_BYTES = 256 * 1024;
 
@@ -94,8 +95,29 @@ function parseListQuery(searchParams) {
     .filter(Boolean)
     .slice(0, 60);
   const sort = searchParams.get('sort') ?? 'relevance';
+  const minPrice = Number.parseInt(searchParams.get('min_price') ?? '', 10);
+  const maxPrice = Number.parseInt(searchParams.get('max_price') ?? '', 10);
+  const brands = (searchParams.get('brand') ?? '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .slice(0, 20);
+  const onlyInStock = ['1', 'true', 'yes'].includes(String(searchParams.get('in_stock') ?? ''));
   const includeOutOfStock = ['1', 'true', 'yes'].includes(String(searchParams.get('include_out_of_stock') ?? ''));
-  return { limit, offset, q, category, brand, ids, sort, includeOutOfStock };
+  return {
+    limit,
+    offset,
+    q,
+    category,
+    brand,
+    brands,
+    ids,
+    sort,
+    includeOutOfStock,
+    onlyInStock,
+    minPrice: Number.isFinite(minPrice) ? minPrice : null,
+    maxPrice: Number.isFinite(maxPrice) ? maxPrice : null,
+  };
 }
 
 function buildProductsQuery(query) {
@@ -121,7 +143,25 @@ function buildProductsQuery(query) {
     where.push('p.brand_norm = :brand');
     params[':brand'] = norm(query.brand);
   }
-  if (!query.includeOutOfStock) {
+  if (query.brands && query.brands.length > 0) {
+    const placeholders = query.brands.map((_, index) => `:brand${index}`);
+    where.push(`p.brand_norm IN (${placeholders.join(',')})`);
+    query.brands.forEach((brand, index) => {
+      params[`:brand${index}`] = norm(brand);
+    });
+  }
+  if (query.minPrice !== null) {
+    where.push('p.price_cents >= :minPrice');
+    params[':minPrice'] = query.minPrice;
+  }
+  if (query.maxPrice !== null) {
+    where.push('p.price_cents <= :maxPrice');
+    params[':maxPrice'] = query.maxPrice;
+  }
+  if (!query.includeOutOfStock && !query.onlyInStock) {
+    where.push('p.stock > 0');
+  }
+  if (query.onlyInStock) {
     where.push('p.stock > 0');
   }
 
@@ -285,6 +325,130 @@ export function createAppServer({ db, adapters, ai, config, logger, syncTrigger 
         return;
       }
 
+      if (req.method === 'GET' && path === '/v1/filters') {
+        const range = get(
+          db,
+          'SELECT MIN(price_cents) AS minPrice, MAX(price_cents) AS maxPrice FROM products WHERE stock > 0',
+        );
+        const brands = all(
+          db,
+          `SELECT vendor AS name, COUNT(*) AS count FROM products
+           WHERE stock > 0 AND vendor IS NOT NULL AND vendor <> ''
+           GROUP BY vendor ORDER BY count DESC LIMIT 40`,
+        );
+        sendJson(
+          res,
+          200,
+          { minPriceCents: range?.minPrice ?? 0, maxPriceCents: range?.maxPrice ?? 0, brands },
+          { 'cache-control': 'public, max-age=300' },
+        );
+        return;
+      }
+
+      if (req.method === 'GET' && path === '/v1/search/suggest') {
+        const q = norm(url.searchParams.get('q') ?? '');
+        if (q.length < 2) {
+          sendJson(res, 200, { items: [] }, { 'cache-control': 'no-store' });
+          return;
+        }
+        const like = `%${q}%`;
+        const titles = all(
+          db,
+          `SELECT id, title, price_cents AS priceCents FROM products
+           WHERE stock > 0 AND title_norm LIKE ? ORDER BY length(title) ASC LIMIT 6`,
+          [like],
+        );
+        const brands = all(
+          db,
+          `SELECT DISTINCT vendor AS name FROM products
+           WHERE stock > 0 AND vendor <> '' AND brand_norm LIKE ? LIMIT 4`,
+          [like],
+        );
+        const categories = all(
+          db,
+          `SELECT DISTINCT category AS name FROM products
+           WHERE stock > 0 AND category_norm LIKE ? LIMIT 3`,
+          [like],
+        );
+        sendJson(
+          res,
+          200,
+          {
+            items: [
+              ...titles.map((row) => ({ type: 'product', id: row.id, title: row.title, priceCents: row.priceCents })),
+              ...brands.map((row) => ({ type: 'brand', id: row.name, title: row.name })),
+              ...categories.map((row) => ({ type: 'category', id: row.name, title: row.name })),
+            ],
+          },
+          { 'cache-control': 'no-store' },
+        );
+        return;
+      }
+
+      if (req.method === 'GET' && path === '/v1/np/cities') {
+        const q = url.searchParams.get('q') ?? '';
+        const remote = await novaPoshta.searchCities(q).catch(() => []);
+        const items = remote.length > 0
+          ? remote
+          : searchCities(q, 20).map((name) => ({ name, ref: null }));
+        sendJson(res, 200, { configured: novaPoshta.configured, items }, { 'cache-control': 'public, max-age=600' });
+        return;
+      }
+
+      if (req.method === 'GET' && path === '/v1/np/warehouses') {
+        const city = url.searchParams.get('city') ?? '';
+        const q = url.searchParams.get('q') ?? '';
+        if (!novaPoshta.configured) {
+          sendJson(res, 200, { configured: false, items: [] }, { 'cache-control': 'no-store' });
+          return;
+        }
+        const items = await novaPoshta.searchWarehouses(city, q).catch(() => []);
+        sendJson(res, 200, { configured: true, items }, { 'cache-control': 'public, max-age=600' });
+        return;
+      }
+
+      if (req.method === 'POST' && path === '/v1/events') {
+        const body = await readJsonBody(req);
+        const allowed = new Set(['product_view', 'add_to_cart', 'order_created', 'search']);
+        const name = String(body?.name ?? '');
+        if (!allowed.has(name)) {
+          throw new ValidationError('Невідома подія', [{ field: 'name' }]);
+        }
+        run(
+          db,
+          'INSERT INTO events (name, product_id, order_id, meta_json, created_at) VALUES (?, ?, ?, ?, ?)',
+          [
+            name,
+            body?.productId ? String(body.productId) : null,
+            body?.orderId ? String(body.orderId) : null,
+            JSON.stringify(body?.meta ?? {}).slice(0, 2000),
+            new Date().toISOString(),
+          ],
+        );
+        sendJson(res, 202, { accepted: true });
+        return;
+      }
+
+      if (req.method === 'GET' && path === '/v1/analytics/summary') {
+        const days = Math.min(Math.max(Number.parseInt(url.searchParams.get('days') ?? '7', 10) || 7, 1), 90);
+        const since = new Date(Date.now() - days * 86_400_000).toISOString();
+        const totals = all(
+          db,
+          'SELECT name, COUNT(*) AS count FROM events WHERE created_at >= ? GROUP BY name ORDER BY count DESC',
+          [since],
+        );
+        const topProducts = all(
+          db,
+          `SELECT product_id AS productId, COUNT(*) AS views FROM events
+           WHERE name = 'product_view' AND created_at >= ? AND product_id IS NOT NULL
+           GROUP BY product_id ORDER BY views DESC LIMIT 10`,
+          [since],
+        );
+        const orders = get(db, 'SELECT COUNT(*) AS count, COALESCE(SUM(total_cents), 0) AS revenue FROM orders WHERE created_at >= ?', [since]);
+        sendJson(res, 200, { days, totals, topProducts, orders }, { 'cache-control': 'no-store' });
+        return;
+      }
+
       const similarMatch = path.match(/^\/v1\/products\/([^/]+)\/similar$/);
       if (req.method === 'GET' && similarMatch) {
         const id = decodeURIComponent(similarMatch[1]);
@@ -299,8 +463,8 @@ export function createAppServer({ db, adapters, ai, config, logger, syncTrigger 
           [
             base.category,
             id,
-            Math.round(base.price_cents * 0.55),
-            Math.round(base.price_cents * 1.8),
+            Math.round(base.price_cents * 0.7),
+            Math.round(base.price_cents * 1.3),
             base.price_cents,
             limit,
           ],

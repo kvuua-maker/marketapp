@@ -50,6 +50,24 @@ export class NovaPoshtaService {
     return data?.[0]?.Ref ?? null;
   }
 
+  async searchCities(query, limit = 20) {
+    if (!this.apiKey) return [];
+    const data = await this.call('Address', 'getCities', { FindByString: query, Limit: String(limit) });
+    return (data ?? []).map((row) => ({ name: row.Description, ref: row.Ref }));
+  }
+
+  async searchWarehouses(cityName, query, limit = 50) {
+    if (!this.apiKey) return [];
+    const cityRef = await this.resolveCityRef(cityName);
+    if (!cityRef) return [];
+    const data = await this.call('Address', 'getWarehouses', {
+      CityRef: cityRef,
+      FindByString: query ?? '',
+      Limit: String(limit),
+    });
+    return (data ?? []).map((row) => ({ name: row.Description, ref: row.Ref }));
+  }
+
   /** @returns {Promise<{ttn: string} | null>} null when not configured. */
   async createWaybill({ order, customer, items, totalCents }) {
     if (!this.configured) return null;
