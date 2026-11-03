@@ -16,9 +16,9 @@ struct ImageGalleryView: View {
             Color.black.ignoresSafeArea()
 
             TabView(selection: $index) {
-                ForEach(Array(images.enumerated()), id: \.offset) { offset, image in
-                    ZoomableImage(url: APIClient.imageURL(image, width: 1200))
-                        .tag(offset)
+                ForEach(images.indices, id: \.self) { index in
+                    ZoomableImage(url: APIClient.imageURL(images[index], width: 1200))
+                        .tag(index)
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: .always))

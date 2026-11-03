@@ -107,10 +107,10 @@ struct ProductDetailView: View {
     private var gallery: some View {
         VStack(spacing: 8) {
             TabView(selection: $pageIndex) {
-                ForEach(Array(images.enumerated()), id: \.offset) { offset, image in
-                    CachedAsyncImage(url: APIClient.imageURL(image, width: 900), contentMode: .fit)
+                ForEach(images.indices, id: \.self) { index in
+                    CachedAsyncImage(url: APIClient.imageURL(images[index], width: 900), contentMode: .fit)
                         .frame(maxWidth: .infinity)
-                        .tag(offset)
+                        .tag(index)
                         .onTapGesture { showGallery = true }
                 }
             }
@@ -133,15 +133,15 @@ struct ProductDetailView: View {
             if images.count > 1 {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
-                        ForEach(Array(images.prefix(8).enumerated()), id: \.offset) { offset, image in
-                            CachedAsyncImage(url: APIClient.imageURL(image, width: 200))
+                        ForEach(Array(images.indices.prefix(8)), id: \.self) { index in
+                            CachedAsyncImage(url: APIClient.imageURL(images[index], width: 200))
                                 .frame(width: 56, height: 56)
                                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                                 .overlay(
                                     RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                        .strokeBorder(offset == pageIndex ? Theme.accent : Color.clear, lineWidth: 2)
+                                        .strokeBorder(index == pageIndex ? Theme.accent : Color.clear, lineWidth: 2)
                                 )
-                                .onTapGesture { pageIndex = offset }
+                                .onTapGesture { pageIndex = index }
                         }
                     }
                 }
