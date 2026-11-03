@@ -106,7 +106,7 @@ export async function runSupplierSync({ db, adapter, ai, config, marginPercent, 
     { 1: adapter.id, 2: startedAt },
   ).lastInsertRowid;
 
-  const counters = { fetched: 0, published: 0, rejected: 0, updated: 0 };
+  const counters = { fetched: 0, published: 0, rejected: 0, updated: 0, duplicates: 0 };
   let batch = [];
   let message = '';
 
@@ -121,6 +121,17 @@ export async function runSupplierSync({ db, adapter, ai, config, marginPercent, 
           continue;
         }
         const existing = get(db, 'SELECT content_hash FROM products WHERE id = ?', { 1: result.record.id });
+        if (!existing) {
+          const clash = get(
+            db,
+            'SELECT id FROM products WHERE supplier_id = ? AND title_norm = ? LIMIT 1',
+            { 1: adapter.id, 2: norm(result.record.title) },
+          );
+          if (clash) {
+            counters.duplicates += 1;
+            continue;
+          }
+        }
         upsertProduct(db, result.record, result.raw.contentHash ?? '');
         if (existing) counters.updated += 1;
         counters.published += 1;

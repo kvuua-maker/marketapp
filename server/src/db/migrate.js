@@ -94,5 +94,34 @@ export function migrate(db, logger) {
     }
   }
 
+  // Full-text index backfill (triggers keep it in sync afterwards).
+  const ftsRows = db.prepare('SELECT COUNT(*) AS c FROM products_fts').get().c;
+  const productRows = db.prepare('SELECT COUNT(*) AS c FROM products').get().c;
+  if (ftsRows !== productRows) {
+    db.exec('DELETE FROM products_fts');
+    db.exec(`INSERT INTO products_fts(id, title, description, category, brand)
+             SELECT id, title, description, category, COALESCE(vendor, '') FROM products`);
+    logger?.info('search index rebuilt', { rows: productRows });
+  }
+
+  // De-duplicate identical product names coming from the supplier feed.
+  const duplicates = db
+    .prepare(
+      `SELECT COUNT(*) AS c FROM (
+         SELECT id, ROW_NUMBER() OVER (PARTITION BY supplier_id, title_norm ORDER BY price_cents ASC, id ASC) AS rn
+         FROM products WHERE title_norm IS NOT NULL
+       ) WHERE rn > 1`,
+    )
+    .get().c;
+  if (duplicates > 0) {
+    db.exec(`DELETE FROM products WHERE id IN (
+               SELECT id FROM (
+                 SELECT id, ROW_NUMBER() OVER (PARTITION BY supplier_id, title_norm ORDER BY price_cents ASC, id ASC) AS rn
+                 FROM products WHERE title_norm IS NOT NULL
+               ) WHERE rn > 1
+             )`);
+    logger?.info('duplicate products removed', { rows: duplicates });
+  }
+
   if (added > 0) logger?.info('schema migrated', { columns: added });
 }

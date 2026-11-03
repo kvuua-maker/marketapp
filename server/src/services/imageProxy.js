@@ -59,17 +59,21 @@ export async function handleImageProxy(req, res, url, { config, logger }) {
 
   const key = createHash('sha1').update(`${target.href}|${width}`).digest('hex');
   const file = join(cacheDir(), `${key}.webp`);
-  const cacheHeaders = { 'cache-control': 'public, max-age=31536000, immutable', etag: `"${key}"` };
+  // Supplier photos change; a week is a safer staleness window than a year.
+  const TTL_MS = 7 * 24 * 60 * 60 * 1000;
+  const cacheHeaders = { 'cache-control': 'public, max-age=604800', etag: `"${key}"` };
 
   if (existsSync(file)) {
     const info = statSync(file);
-    res.writeHead(200, {
-      'content-type': 'image/webp',
-      'content-length': info.size,
-      ...cacheHeaders,
-    });
-    createReadStream(file).pipe(res);
-    return;
+    if (Date.now() - info.mtimeMs < TTL_MS) {
+      res.writeHead(200, {
+        'content-type': 'image/webp',
+        'content-length': info.size,
+        ...cacheHeaders,
+      });
+      createReadStream(file).pipe(res);
+      return;
+    }
   }
 
   try {

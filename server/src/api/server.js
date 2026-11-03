@@ -120,6 +120,15 @@ function parseListQuery(searchParams) {
   };
 }
 
+/** Builds a prefix FTS query: "кастр" -> "кастр"*. */
+function buildFtsQuery(raw) {
+  const tokens = norm(raw)
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((token) => token.length >= 2);
+  if (tokens.length === 0) return null;
+  return tokens.map((token) => `"${token.replace(/"/g, '')}"*`).join(' AND ');
+}
+
 function buildProductsQuery(query) {
   const where = [];
   const params = {};
@@ -132,8 +141,15 @@ function buildProductsQuery(query) {
     });
   }
   if (normalisedQuery) {
-    where.push('(p.title_norm LIKE :q OR p.description_norm LIKE :q OR p.category_norm LIKE :q OR p.brand_norm LIKE :q)');
     params[':q'] = `%${normalisedQuery}%`;
+    const ftsQuery = buildFtsQuery(query.q);
+    if (ftsQuery) {
+      // Fast path: FTS narrows the candidate set, the CASE below ranks it.
+      where.push('p.id IN (SELECT id FROM products_fts WHERE products_fts MATCH :fts)');
+      params[':fts'] = ftsQuery;
+    } else {
+      where.push('(p.title_norm LIKE :q OR p.description_norm LIKE :q OR p.category_norm LIKE :q OR p.brand_norm LIKE :q)');
+    }
   }
   if (query.category && query.category !== 'Усі') {
     where.push('p.category = :category');
@@ -186,7 +202,12 @@ function buildProductsQuery(query) {
 
   params[':limit'] = query.limit;
   params[':offset'] = query.offset;
-  return { whereSql, orderSql, params };
+
+  const countParams = Object.fromEntries(
+    Object.entries(params).filter(([key]) => new RegExp(`${key}(?!\\d)`).test(whereSql)),
+  );
+
+  return { whereSql, orderSql, params, countParams };
 }
 
 export function createAppServer({ db, adapters, ai, config, logger, syncTrigger }) {
@@ -291,12 +312,9 @@ export function createAppServer({ db, adapters, ai, config, logger, syncTrigger 
 
       if (req.method === 'GET' && path === '/v1/products') {
         const query = parseListQuery(url.searchParams);
-        const { whereSql, orderSql, params } = buildProductsQuery(query);
-        const filterParams = { ...params };
-        delete filterParams[':limit'];
-        delete filterParams[':offset'];
+        const { whereSql, orderSql, params, countParams } = buildProductsQuery(query);
 
-        const countRow = get(db, `SELECT COUNT(*) AS count FROM products p ${whereSql}`, filterParams);
+        const countRow = get(db, `SELECT COUNT(*) AS count FROM products p ${whereSql}`, countParams);
         const rows = all(db, `SELECT p.* FROM products p ${whereSql} ORDER BY ${orderSql} LIMIT :limit OFFSET :offset`, params);
         sendJson(
           res,

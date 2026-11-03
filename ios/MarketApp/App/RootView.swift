@@ -17,6 +17,11 @@ final class AppRouter: ObservableObject {
         tab = .catalog
         sidebar = .all
     }
+
+    /// Single entry point so chips, sidebar and reset always agree.
+    func selectCategory(_ name: String?) {
+        sidebar = name.map(SidebarItem.category) ?? .all
+    }
 }
 
 enum SidebarItem: Hashable {
@@ -51,6 +56,18 @@ struct RootView: View {
         .environmentObject(profile)
         .environmentObject(router)
         .preferredColorScheme(profile.theme.colorScheme)
+        // Single source of truth: any sidebar change (buttons, chips, reset,
+        // "go to catalog") drives the catalog exactly once.
+        .onChange(of: router.sidebar) { _, newValue in
+            switch newValue ?? .all {
+            case .category(let name):
+                catalog.selectCategory(name)
+            case .all:
+                catalog.selectCategory(nil)
+            case .cart, .profile:
+                break
+            }
+        }
     }
 }
 
@@ -62,28 +79,40 @@ struct SplitRootView: View {
 
     var body: some View {
         NavigationSplitView {
-            List(selection: $router.sidebar) {
-                Label("Усі товари", systemImage: "square.grid.2x2")
-                    .tag(SidebarItem.all)
+            List {
+                Button {
+                    router.sidebar = .all
+                } label: {
+                    sidebarRow(icon: "square.grid.2x2", title: "Усі товари", selected: router.sidebar == .all)
+                }
+                .buttonStyle(.plain)
 
-                Label("Кошик", systemImage: "cart")
-                    .badge(cart.count)
-                    .tag(SidebarItem.cart)
+                Button {
+                    router.sidebar = .cart
+                } label: {
+                    sidebarRow(icon: "cart", title: "Кошик", selected: router.sidebar == .cart, badge: cart.count)
+                }
+                .buttonStyle(.plain)
 
-                Label("Профіль", systemImage: "person.crop.circle")
-                    .tag(SidebarItem.profile)
+                Button {
+                    router.sidebar = .profile
+                } label: {
+                    sidebarRow(icon: "person.crop.circle", title: "Профіль", selected: router.sidebar == .profile)
+                }
+                .buttonStyle(.plain)
 
                 Section("Категорії") {
                     ForEach(catalog.categories) { category in
-                        HStack(spacing: 8) {
-                            Text(category.name).lineLimit(1)
-                            Spacer(minLength: 4)
-                            Text("\(category.count)")
-                                .font(.caption)
-                                .monospacedDigit()
-                                .foregroundStyle(.secondary)
+                        Button {
+                            router.sidebar = .category(category.name)
+                        } label: {
+                            sidebarRow(
+                                title: category.name,
+                                selected: router.sidebar == .category(category.name),
+                                count: category.count
+                            )
                         }
-                        .tag(SidebarItem.category(category.name))
+                        .buttonStyle(.plain)
                     }
                 }
             }
@@ -108,17 +137,48 @@ struct SplitRootView: View {
             }
         }
         .navigationSplitViewStyle(.balanced)
-        .onChange(of: router.sidebar) { _, newValue in
-            switch newValue ?? .all {
-            case .category(let name):
-                catalog.selectCategory(name)
-            case .all:
-                catalog.selectCategory(nil)
-            case .cart, .profile:
-                break
+        .task { await catalog.loadShell() }
+    }
+
+    /// Full-width, explicit hit area — the reason sidebar taps were dead on iPad.
+    private func sidebarRow(
+        icon: String? = nil,
+        title: String,
+        selected: Bool,
+        count: Int? = nil,
+        badge: Int? = nil
+    ) -> some View {
+        HStack(spacing: 8) {
+            if let icon {
+                Image(systemName: icon)
+                    .frame(width: 22)
+            }
+            Text(title)
+                .lineLimit(1)
+            Spacer(minLength: 6)
+            if let badge, badge > 0 {
+                Text("\(badge)")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(.red, in: Capsule())
+            }
+            if let count {
+                Text("\(count)")
+                    .font(.caption)
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
             }
         }
-        .task { await catalog.bootstrap() }
+        .padding(.vertical, 5)
+        .padding(.horizontal, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .background(
+            selected ? Theme.accent.opacity(0.16) : Color.clear,
+            in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+        )
     }
 }
 

@@ -3,6 +3,7 @@ import { SupplierAdapter } from './adapter.js';
 import { fetchText } from '../core/httpClient.js';
 import { extractBlocks, childText, childTexts, cleanFeedText } from './xml.js';
 import { collapseWhitespace } from '../domain/text.js';
+import { parseFeedPrice, isSupportedCurrency, resolveImageUrl } from '../domain/priceParser.js';
 
 /**
  * Zakupus — B2B electronics supplier publishing an XML price list that already
@@ -16,6 +17,15 @@ export class ZakupusAdapter extends SupplierAdapter {
 
   get isConfigured() {
     return Boolean(this.config.xmlUrl || this.config.xmlPath);
+  }
+
+  /** Base origin used to resolve relative image paths. */
+  feedOrigin() {
+    try {
+      return new URL(this.config.xmlUrl).origin;
+    } catch {
+      return 'https://zakupus.com.ua';
+    }
   }
 
   async loadXml() {
@@ -39,13 +49,25 @@ export class ZakupusAdapter extends SupplierAdapter {
 
   mapBlock(block, categoryMap = new Map()) {
     const priceText = childText(block, 'price') || childText(block, 'wholesale_price');
-    const cost = Number.parseFloat(String(priceText).replace(',', '.'));
-    if (!Number.isFinite(cost) || cost <= 0) return null;
+    const costCents = parseFeedPrice(priceText);
+    if (!costCents) {
+      this.logger?.warn('feed price rejected', { raw: String(priceText).slice(0, 24) });
+      return null;
+    }
 
+    const currency = childText(block, 'currencyId') || 'UAH';
+    if (!isSupportedCurrency(currency)) {
+      this.logger?.warn('unsupported currency, product skipped', { currency });
+      return null;
+    }
+
+    const origin = this.feedOrigin();
     const images = [
       ...childTexts(block, 'picture'),
       ...childTexts(block, 'image'),
-    ].filter((src) => src.startsWith('http'));
+    ]
+      .map((src) => resolveImageUrl(src, origin))
+      .filter(Boolean);
     if (images.length === 0) return null;
 
     const title = collapseWhitespace(childText(block, 'name') || childText(block, 'title'));
@@ -68,8 +90,9 @@ export class ZakupusAdapter extends SupplierAdapter {
       description: cleanFeedText(childText(block, 'description')),
       imageUrl: images[0],
       images,
-      costCents: Math.round(cost * 100),
-      currency: childText(block, 'currencyId') || 'UAH',
+      costCents,
+      oldPriceCents: parseFeedPrice(childText(block, 'oldprice') || childText(block, 'old_price')),
+      currency: 'UAH',
       stock: Number.isFinite(stock) ? stock : 0,
       categoryRaw,
       categoryPath: [],

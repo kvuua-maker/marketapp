@@ -147,3 +147,28 @@ CREATE TABLE IF NOT EXISTS events (
   created_at  TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_events_name ON events(name, created_at);
+
+-- ── Full-text search (Cyrillic-aware) ────────────────────────────────────
+CREATE VIRTUAL TABLE IF NOT EXISTS products_fts USING fts5(
+  id UNINDEXED,
+  title,
+  description,
+  category,
+  brand,
+  tokenize = 'unicode61 remove_diacritics 2'
+);
+
+CREATE TRIGGER IF NOT EXISTS products_ai AFTER INSERT ON products BEGIN
+  INSERT INTO products_fts(id, title, description, category, brand)
+  VALUES (new.id, new.title, new.description, new.category, new.vendor);
+END;
+
+CREATE TRIGGER IF NOT EXISTS products_ad AFTER DELETE ON products BEGIN
+  DELETE FROM products_fts WHERE id = old.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS products_au AFTER UPDATE ON products BEGIN
+  DELETE FROM products_fts WHERE id = old.id;
+  INSERT INTO products_fts(id, title, description, category, brand)
+  VALUES (new.id, new.title, new.description, new.category, new.vendor);
+END;

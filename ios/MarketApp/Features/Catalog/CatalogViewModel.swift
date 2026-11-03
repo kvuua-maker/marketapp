@@ -28,6 +28,11 @@ final class CatalogViewModel: ObservableObject {
     private var hasMore = true
     private var searchTask: Task<Void, Never>?
     private var suggestionTask: Task<Void, Never>?
+    private var shellTask: Task<Void, Never>?
+
+    /// In-flight page request + token so a newer request always wins.
+    private var activeLoad: Task<ProductPage, Error>?
+    private var loadToken = 0
 
     var isInitialLoading: Bool { isLoading && products.isEmpty }
 
@@ -43,13 +48,34 @@ final class CatalogViewModel: ObservableObject {
         sort == .relevance && searchText.isEmpty ? "new" : sort.rawValue
     }
 
-    // MARK: - Loading
+    // MARK: - Bootstrap (single flight)
 
-    func bootstrap() async {
-        if categories.isEmpty { await loadCategories() }
-        if promotions.isEmpty { await loadPromotions() }
-        if filterOptions == nil { filterOptions = try? await APIClient.shared.filters() }
-        if products.isEmpty && errorMessage == nil { await reload() }
+    /// Categories + promotions are needed by the iPad sidebar even when the
+    /// catalog itself is not on screen.
+    func loadShell() async {
+        if let existing = shellTask {
+            await existing.value
+            return
+        }
+        if !categories.isEmpty && !promotions.isEmpty { return }
+
+        let task = Task { [weak self] in
+            guard let self else { return }
+            if self.categories.isEmpty { await self.loadCategories() }
+            if self.promotions.isEmpty { await self.loadPromotions() }
+        }
+        shellTask = task
+        await task.value
+        shellTask = nil
+    }
+
+    func loadCatalogIfNeeded() async {
+        if filterOptions == nil {
+            filterOptions = try? await APIClient.shared.filters()
+        }
+        if products.isEmpty && errorMessage == nil {
+            await reload()
+        }
     }
 
     func loadCategories() async {
@@ -60,6 +86,8 @@ final class CatalogViewModel: ObservableObject {
         promotions = (try? await APIClient.shared.promotions(limit: 8))?.items ?? []
     }
 
+    // MARK: - Loading (cancel → restart)
+
     func reload() async {
         offset = 0
         hasMore = true
@@ -67,10 +95,6 @@ final class CatalogViewModel: ObservableObject {
     }
 
     func loadPage(replace: Bool = false) async {
-        guard !isLoading else { return }
-        isLoading = true
-        defer { isLoading = false }
-
         let query = ProductQuery(
             category: selectedCategory,
             search: searchText,
@@ -84,8 +108,17 @@ final class CatalogViewModel: ObservableObject {
             limit: pageSize
         )
 
+        // A new request always supersedes the previous one instead of being dropped.
+        loadToken += 1
+        let token = loadToken
+        activeLoad?.cancel()
+        let task = Task { try await APIClient.shared.products(query) }
+        activeLoad = task
+        isLoading = true
+
         do {
-            let page = try await APIClient.shared.products(query)
+            let page = try await task.value
+            guard token == loadToken else { return }
             if replace {
                 products = page.items
                 offset = page.items.count
@@ -96,9 +129,14 @@ final class CatalogViewModel: ObservableObject {
             total = page.total
             hasMore = offset < page.total && !page.items.isEmpty
             errorMessage = nil
+        } catch is CancellationError {
+            return
         } catch {
+            guard token == loadToken else { return }
             errorMessage = error.localizedDescription
         }
+
+        if token == loadToken { isLoading = false }
     }
 
     func loadMoreIfNeeded() async {
@@ -130,15 +168,8 @@ final class CatalogViewModel: ObservableObject {
         Task { await reload() }
     }
 
-    func showOutOfStock(_ show: Bool) {
-        let newValue = !show
-        guard onlyInStock != newValue else { return }
-        onlyInStock = newValue
-        Task { await reload() }
-    }
-
+    /// Clears everything except the category (which is owned by AppRouter).
     func resetFilters() {
-        selectedCategory = nil
         searchText = ""
         minPriceCents = nil
         maxPriceCents = nil
@@ -186,15 +217,10 @@ final class CatalogViewModel: ObservableObject {
         case "brand":
             selectedBrands = [suggestion.title]
             searchText = ""
-            suggestions = []
-        case "category":
-            selectedCategory = suggestion.title
-            searchText = ""
-            suggestions = []
         default:
             searchText = suggestion.title
-            suggestions = []
         }
+        suggestions = []
         Task { await reload() }
     }
 }

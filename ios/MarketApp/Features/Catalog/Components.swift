@@ -2,6 +2,9 @@ import SwiftUI
 
 // MARK: - Product tile
 
+/// The card is a ZStack: the navigation layer sits underneath, the buy button
+/// and the favourite heart live in their own layers above it with zIndex, so on
+/// iPad the link can never swallow the button taps.
 struct ProductTile: View {
     let product: Product
     var imageHeight: CGFloat = 170
@@ -10,113 +13,144 @@ struct ProductTile: View {
     @EnvironmentObject private var favorites: FavoritesStore
     @State private var justAdded = false
 
+    private let buyBarHeight: CGFloat = 48
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        ZStack(alignment: .bottom) {
             NavigationLink(value: product) {
-                VStack(alignment: .leading, spacing: 8) {
-                    ZStack(alignment: .topLeading) {
-                        CachedAsyncImage(url: APIClient.imageURL(product.imageUrl, width: 500))
-                            .frame(height: imageHeight)
-                            .frame(maxWidth: .infinity)
-                            .clipped()
-                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-
-                        HStack(spacing: 6) {
-                            if product.discountPercent > 0 {
-                                Text("-\(product.discountPercent)%")
-                                    .font(.caption2.weight(.bold))
-                                    .padding(.horizontal, 7)
-                                    .padding(.vertical, 3)
-                                    .background(.red, in: Capsule())
-                                    .foregroundStyle(.white)
-                            }
-                            if !product.isAvailable {
-                                Text("Немає")
-                                    .font(.caption2.weight(.semibold))
-                                    .padding(.horizontal, 7)
-                                    .padding(.vertical, 3)
-                                    .background(.ultraThinMaterial, in: Capsule())
-                            }
-                        }
-                        .padding(8)
-                    }
-
-                    Text(product.title)
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(.primary)
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
-                        .frame(minHeight: 38, alignment: .topLeading)
-
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Text(Money.uah(cents: product.priceCents))
-                            .font(.headline)
-                        if let old = product.oldPriceCents, old > product.priceCents {
-                            Text(Money.uah(cents: old))
-                                .font(.caption)
-                                .strikethrough()
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer(minLength: 0)
-                    }
-
-                    HStack(spacing: 4) {
-                        if product.ratingCount > 0 {
-                            Image(systemName: "star.fill")
-                                .font(.caption2)
-                                .foregroundStyle(.orange)
-                            Text(String(format: "%.1f", product.rating))
-                                .font(.caption2)
-                            Text("(\(product.ratingCount))")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        } else if let vendor = product.vendor, !vendor.isEmpty {
-                            Text(vendor)
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
-                        Spacer(minLength: 0)
-                    }
-                }
+                content
+                    .padding(10)
+                    .padding(.bottom, buyBarHeight)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
 
-            Button {
-                cart.add(product)
-                Analytics.track("add_to_cart", productId: product.id)
-                justAdded = true
-                Task { @MainActor in
-                    try? await Task.sleep(nanoseconds: 1_200_000_000)
-                    justAdded = false
-                }
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: justAdded ? "checkmark" : "cart.badge.plus")
-                    Text(justAdded ? "Додано" : "Купити")
-                }
-                .font(.footnote.weight(.semibold))
-                .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.small)
-            .disabled(!product.isAvailable)
+            buyButton
+                .padding(.horizontal, 10)
+                .padding(.bottom, 10)
+                .zIndex(1)
         }
-        .padding(10)
-        .cardSurface()
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: Theme.corner, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.corner, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.06))
+        )
         .overlay(alignment: .topTrailing) {
-            Button {
-                favorites.toggle(product.id)
-            } label: {
-                Image(systemName: favorites.contains(product.id) ? "heart.fill" : "heart")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(favorites.contains(product.id) ? .red : .secondary)
-                    .padding(7)
-                    .background(.ultraThinMaterial, in: Circle())
-            }
-            .buttonStyle(.plain)
-            .padding(8)
+            favoriteButton
+                .zIndex(2)
+                .padding(8)
         }
+    }
+
+    // MARK: - Content (tappable → product)
+
+    private var content: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ZStack(alignment: .topLeading) {
+                CachedAsyncImage(url: APIClient.imageURL(product.imageUrl, width: 500))
+                    .frame(height: imageHeight)
+                    .frame(maxWidth: .infinity)
+                    .clipped()
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+
+                HStack(spacing: 6) {
+                    if product.discountPercent > 0 {
+                        Text("-\(product.discountPercent)%")
+                            .font(.caption2.weight(.bold))
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(.red, in: Capsule())
+                            .foregroundStyle(.white)
+                    }
+                    if !product.isAvailable {
+                        Text("Немає")
+                            .font(.caption2.weight(.semibold))
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(.ultraThinMaterial, in: Capsule())
+                    }
+                }
+                .padding(8)
+            }
+
+            Text(product.title)
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(.primary)
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+                .frame(minHeight: 38, alignment: .topLeading)
+
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(Money.uah(cents: product.priceCents))
+                    .font(.headline)
+                if let old = product.oldPriceCents, old > product.priceCents {
+                    Text(Money.uah(cents: old))
+                        .font(.caption)
+                        .strikethrough()
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+            }
+
+            HStack(spacing: 4) {
+                if product.ratingCount > 0 {
+                    Image(systemName: "star.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                    Text(String(format: "%.1f", product.rating))
+                        .font(.caption2)
+                    Text("(\(product.ratingCount))")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                } else if let vendor = product.vendor, !vendor.isEmpty {
+                    Text(vendor)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 0)
+            }
+        }
+    }
+
+    // MARK: - Controls (own layer)
+
+    private var buyButton: some View {
+        Button {
+            cart.add(product)
+            Analytics.track("add_to_cart", productId: product.id)
+            justAdded = true
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 1_200_000_000)
+                justAdded = false
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: justAdded ? "checkmark" : "cart.badge.plus")
+                Text(justAdded ? "Додано" : "Купити")
+            }
+            .font(.footnote.weight(.semibold))
+            .frame(maxWidth: .infinity)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderedProminent)
+        .controlSize(.small)
+        .disabled(!product.isAvailable)
+    }
+
+    private var favoriteButton: some View {
+        Button {
+            favorites.toggle(product.id)
+        } label: {
+            Image(systemName: favorites.contains(product.id) ? "heart.fill" : "heart")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(favorites.contains(product.id) ? .red : .secondary)
+                .padding(7)
+                .background(.ultraThinMaterial, in: Circle())
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -175,6 +209,7 @@ struct CategoryChips: View {
                     in: Capsule()
                 )
                 .foregroundStyle(isSelected ? .white : .primary)
+                .contentShape(Capsule())
         }
         .buttonStyle(.plain)
     }
@@ -260,6 +295,7 @@ struct SuggestionList: View {
                     }
                     .padding(.vertical, 10)
                     .padding(.horizontal, 14)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
 

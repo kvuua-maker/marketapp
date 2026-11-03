@@ -100,6 +100,18 @@ export class AveoptAdapter extends SupplierAdapter {
     }
   }
 
+  /** Re-reads a single product so a "last item" order is not oversold. */
+  async checkStock(externalId) {
+    const base = String(this.config.baseUrl).replace(/\/$/, '');
+    const endpoint = this.config.endpoint ?? '/wp-json/wc/store/v1/products';
+    const item = await fetchJson(`${base}${endpoint}/${encodeURIComponent(externalId)}`, {
+      timeoutMs: 8000,
+      retries: 1,
+    });
+    if (!item) return 0;
+    return item.is_in_stock ? (item.low_stock_remaining ?? 1) : 0;
+  }
+
   async placeOrder() {
     const error = new Error('Aveopt public API does not accept orders; using email fallback');
     error.code = 'order_api_unsupported';

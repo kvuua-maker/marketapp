@@ -11,6 +11,7 @@ struct ProfileView: View {
     @State private var errorMessage: String?
     @State private var notice: String?
     @State private var showAddressSheet = false
+    @State private var ordersTask: Task<Void, Never>?
 
     var body: some View {
         Form {
@@ -23,7 +24,13 @@ struct ProfileView: View {
         .navigationTitle("Профіль")
         .task { await refresh() }
         .onChange(of: profile.phone) { _, _ in
-            Task { await loadOrders() }
+            // Debounce: typing a phone number must not fire a request per keystroke.
+            ordersTask?.cancel()
+            ordersTask = Task {
+                try? await Task.sleep(nanoseconds: 350_000_000)
+                guard !Task.isCancelled else { return }
+                await loadOrders()
+            }
         }
         .refreshable { await refresh() }
         .sheet(isPresented: $showAddressSheet) {

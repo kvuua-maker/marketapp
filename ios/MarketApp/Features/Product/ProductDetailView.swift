@@ -91,7 +91,14 @@ struct ProductDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task {
             Analytics.track("product_view", productId: product.id)
-            detail = try? await APIClient.shared.productDetail(id: product.id)
+
+            if let cached = ProductDetailCache.shared.value(for: product.id) {
+                detail = cached
+            } else if let loaded = try? await APIClient.shared.productDetail(id: product.id) {
+                detail = loaded
+                ProductDetailCache.shared.insert(loaded)
+            }
+
             similar = (try? await APIClient.shared.similar(id: product.id))?.items ?? []
         }
         .fullScreenCover(isPresented: $showGallery) {

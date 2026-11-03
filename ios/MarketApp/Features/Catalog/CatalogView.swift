@@ -4,6 +4,7 @@ import UIKit
 struct CatalogView: View {
     @EnvironmentObject private var catalog: CatalogViewModel
     @EnvironmentObject private var cart: CartStore
+    @EnvironmentObject private var router: AppRouter
 
     @State private var contentWidth: CGFloat = 0
     @State private var showFilters = false
@@ -33,7 +34,11 @@ struct CatalogView: View {
             if searchFocused && !catalog.suggestions.isEmpty {
                 SuggestionList(suggestions: catalog.suggestions) { suggestion in
                     searchFocused = false
-                    catalog.applySuggestion(suggestion)
+                    if suggestion.type == "category" {
+                        router.selectCategory(suggestion.title)
+                    } else {
+                        catalog.applySuggestion(suggestion)
+                    }
                 }
                 .padding(.top, 6)
             }
@@ -43,7 +48,7 @@ struct CatalogView: View {
                     CategoryChips(
                         categories: catalog.categories,
                         selected: catalog.selectedCategory
-                    ) { catalog.selectCategory($0) }
+                    ) { router.selectCategory($0) }
                     .padding(.top, 10)
 
                     PromoBanner(items: catalog.promotions)
@@ -78,7 +83,10 @@ struct CatalogView: View {
         .sheet(isPresented: $showFilters) {
             FiltersSheet(options: catalog.filterOptions)
         }
-        .task { await catalog.bootstrap() }
+        .task {
+            await catalog.loadShell()
+            await catalog.loadCatalogIfNeeded()
+        }
     }
 
     // MARK: - Header
@@ -180,6 +188,7 @@ struct CatalogView: View {
                 .foregroundStyle(.secondary)
             Spacer()
             Button("Скинути") {
+                router.selectCategory(nil)
                 catalog.resetFilters()
             }
             .font(.caption.weight(.semibold))
@@ -220,7 +229,10 @@ struct CatalogView: View {
                 systemImage: "magnifyingglass",
                 message: "Спробуйте змінити запит або скинути фільтри.",
                 actionTitle: "Скинути фільтри",
-                action: { catalog.resetFilters() }
+                action: {
+                    router.selectCategory(nil)
+                    catalog.resetFilters()
+                }
             )
         }
     }

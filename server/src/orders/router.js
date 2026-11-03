@@ -4,6 +4,35 @@ import { ValidationError, NotFoundError } from '../core/errors.js';
 import { composeSupplierEmail, enqueueOutbox } from './outbox.js';
 import { normPhone } from '../domain/normalize.js';
 
+/**
+ * Items with a single unit left are checked against the supplier right before
+ * the order is routed — the catalog can be up to 90 minutes stale.
+ */
+async function revalidateLowStock({ products, adapterById, logger }) {
+  for (const product of products) {
+    if (product.stock > 1) continue;
+    const adapter = adapterById.get(product.supplier_id);
+    if (!adapter?.checkStock) continue;
+
+    try {
+      const stock = await Promise.race([
+        adapter.checkStock(product.external_id),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('stock check timeout')), 5000)),
+      ]);
+      if (Number(stock) <= 0) {
+        throw new ValidationError(`Товар «${product.title}» щойно закінчився. Оновіть кошик.`);
+      }
+      product.stock = Number(stock);
+    } catch (error) {
+      if (error instanceof ValidationError) throw error;
+      logger.warn('live stock check failed, continuing with cached value', {
+        productId: product.id,
+        error: error.message,
+      });
+    }
+  }
+}
+
 const PHONE_UA = /^(?:\+?38)?0(\d{9})$/;
 const MAX_QTY_PER_ITEM = 10;
 
@@ -109,6 +138,9 @@ export async function createOrder({ db, adapters, config, logger, payload, novaP
   });
 
   const adapterById = new Map(adapters.map((adapter) => [adapter.id, adapter]));
+
+  await revalidateLowStock({ products, adapterById, logger });
+
   const routed = [];
 
   for (const [supplierId, supplierProducts] of groups) {
