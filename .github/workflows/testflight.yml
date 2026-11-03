@@ -437,7 +437,7 @@ jobs:
             if (!a) process.exit(4);
             process.stdout.write(a.id);
           ')
-          for attempt in $(seq 1 12); do
+          for attempt in $(seq 1 30); do
             sleep 20
             curl -s -o "$RUNNER_TEMP/builds.json" -H "Authorization: Bearer $ASC_TOKEN" \
               "$API/builds?filter%5Bapp%5D=$APP_ID&limit=10&sort=-uploadedDate"
