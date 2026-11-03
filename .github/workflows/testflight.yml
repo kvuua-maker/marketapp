@@ -309,8 +309,14 @@ jobs:
           BUNDLE=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$APP/Info.plist")
           BUILD=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$APP/Info.plist")
           VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP/Info.plist")
+          API=$(/usr/libexec/PlistBuddy -c "Print :APIBaseURL" "$APP/Info.plist")
+          ATS=$(/usr/libexec/PlistBuddy -c "Print :NSAppTransportSecurity:NSAllowsArbitraryLoads" "$APP/Info.plist")
+          ENC=$(/usr/libexec/PlistBuddy -c "Print :ITSAppUsesNonExemptEncryption" "$APP/Info.plist")
           echo "bundle=$BUNDLE version=$VERSION build=$BUILD"
+          echo "api=$API ats_arbitrary=$ATS encryption_exempt=$ENC"
           test "$BUNDLE" = "$APP_BUNDLE" || { echo "::error::Unexpected bundle id $BUNDLE"; exit 1; }
+          test "$ATS" = "true" || { echo "::error::NSAllowsArbitraryLoads missing from the archive"; exit 1; }
+          test "$ENC" = "false" || { echo "::error::ITSAppUsesNonExemptEncryption must be false"; exit 1; }
           test -n "$BUILD" || { echo "::error::Empty CFBundleVersion"; exit 1; }
 
       - name: Sign the app and package the IPA

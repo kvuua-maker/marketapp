@@ -74,3 +74,19 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             build | tee /tmp/xcodebuild.log | tail -n 40
+
+      - name: Verify bundled Info.plist
+        working-directory: ios
+        run: |
+          set -euo pipefail
+          APP=$(find build/Build/Products -maxdepth 2 -name 'MarketApp.app' | head -1)
+          echo "app bundle: $APP"
+          API=$(/usr/libexec/PlistBuddy -c "Print :APIBaseURL" "$APP/Info.plist")
+          ATS=$(/usr/libexec/PlistBuddy -c "Print :NSAppTransportSecurity:NSAllowsArbitraryLoads" "$APP/Info.plist")
+          ENC=$(/usr/libexec/PlistBuddy -c "Print :ITSAppUsesNonExemptEncryption" "$APP/Info.plist")
+          echo "APIBaseURL=$API"
+          echo "NSAllowsArbitraryLoads=$ATS"
+          echo "ITSAppUsesNonExemptEncryption=$ENC"
+          test "$ATS" = "true" || { echo "::error::NSAllowsArbitraryLoads is not true in the built app"; exit 1; }
+          test "$ENC" = "false" || { echo "::error::ITSAppUsesNonExemptEncryption is not false"; exit 1; }
+          case "$API" in http://*|https://*) ;; *) echo "::error::APIBaseURL invalid: $API"; exit 1;; esac

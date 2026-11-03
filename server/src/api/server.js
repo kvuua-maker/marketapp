@@ -250,7 +250,12 @@ export function createAppServer({ db, adapters, ai, config, logger, syncTrigger 
       if (status >= 500) logger.error('request failed', { path, error });
       sendJson(res, status, { error: toPublicError(error) });
     } finally {
-      logger.debug('request', { method: req.method, path, ms: Date.now() - startedAt });
+      const remote = req.socket.remoteAddress ?? '';
+      const local = remote === '' || remote === '::1' || remote.startsWith('127.') || remote.startsWith('::ffff:127.');
+      const entry = { method: req.method, path, status: res.statusCode, ms: Date.now() - startedAt };
+      // Remote traffic is logged at info level so device-side issues are diagnosable.
+      if (local) logger.debug('request', entry);
+      else logger.info('remote request', { ...entry, remote });
     }
   });
 
