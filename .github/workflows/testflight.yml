@@ -315,6 +315,8 @@ jobs:
           echo "bundle=$BUNDLE version=$VERSION build=$BUILD"
           echo "api=$API ats_arbitrary=$ATS encryption_exempt=$ENC"
           test "$BUNDLE" = "$APP_BUNDLE" || { echo "::error::Unexpected bundle id $BUNDLE"; exit 1; }
+          LOCAL=$(/usr/libexec/PlistBuddy -c "Print :NSAppTransportSecurity:NSAllowsLocalNetworking" "$APP/Info.plist" 2>/dev/null || echo absent)
+          test "$LOCAL" = "absent" || { echo "::error::NSAllowsLocalNetworking disables NSAllowsArbitraryLoads"; exit 1; }
           test "$ATS" = "true" || { echo "::error::NSAllowsArbitraryLoads missing from the archive"; exit 1; }
           test "$ENC" = "false" || { echo "::error::ITSAppUsesNonExemptEncryption must be false"; exit 1; }
           test -n "$BUILD" || { echo "::error::Empty CFBundleVersion"; exit 1; }

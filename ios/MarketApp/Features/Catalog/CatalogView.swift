@@ -81,16 +81,29 @@ struct CatalogView: View {
         if catalog.isLoading && catalog.products.isEmpty {
             ProgressView("Завантаження…")
         } else if let error = catalog.errorMessage, catalog.products.isEmpty {
-            VStack(spacing: 12) {
-                ContentUnavailableView(
-                    "Немає звʼязку із сервером",
-                    systemImage: "wifi.exclamationmark",
-                    description: Text(error)
-                )
-                Button("Спробувати ще") {
-                    Task { await catalog.reload() }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    Label("Немає звʼязку із сервером", systemImage: "wifi.exclamationmark")
+                        .font(.headline)
+
+                    Text(error)
+                        .font(.system(.footnote, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(12)
+                        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+                    Text("Build \(Bundle.main.buildNumber) · \(AppConfig.baseURL.absoluteString)")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+
+                    Button("Спробувати ще") {
+                        Task { await catalog.reload() }
+                    }
+                    .buttonStyle(.borderedProminent)
                 }
-                .buttonStyle(.borderedProminent)
+                .padding(20)
+                .frame(maxWidth: 560, alignment: .leading)
             }
         } else if catalog.products.isEmpty {
             ContentUnavailableView(

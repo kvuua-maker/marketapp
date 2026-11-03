@@ -55,12 +55,16 @@
 	<key>APIBaseURL</key>
 	<string>$(API_BASE_URL)</string>
 
-	<!-- The API is plain HTTP on a public IP; ATS must allow it until TLS lands. -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>MarketApp звертається до сервера магазину, щоб показати актуальні товари та ціни.</string>
+
+	<!-- The API is plain HTTP on a public IP; ATS must allow it until TLS lands.
+	     IMPORTANT: do not add NSAllowsLocalNetworking / NSAllowsArbitraryLoadsInWebContent /
+	     NSAllowsArbitraryLoadsForMedia here. Their presence makes iOS ignore
+	     NSAllowsArbitraryLoads and fall back to ATS defaults (HTTP blocked). -->
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>
-		<true/>
-		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
 </dict>

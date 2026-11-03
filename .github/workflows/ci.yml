@@ -87,6 +87,8 @@ jobs:
           echo "APIBaseURL=$API"
           echo "NSAllowsArbitraryLoads=$ATS"
           echo "ITSAppUsesNonExemptEncryption=$ENC"
+          LOCAL=$(/usr/libexec/PlistBuddy -c "Print :NSAppTransportSecurity:NSAllowsLocalNetworking" "$APP/Info.plist" 2>/dev/null || echo absent)
+          test "$LOCAL" = "absent" || { echo "::error::NSAllowsLocalNetworking disables NSAllowsArbitraryLoads"; exit 1; }
           test "$ATS" = "true" || { echo "::error::NSAllowsArbitraryLoads is not true in the built app"; exit 1; }
           test "$ENC" = "false" || { echo "::error::ITSAppUsesNonExemptEncryption is not false"; exit 1; }
           case "$API" in http://*|https://*) ;; *) echo "::error::APIBaseURL invalid: $API"; exit 1;; esac

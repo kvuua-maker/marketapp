@@ -5,6 +5,20 @@ struct APIError: LocalizedError {
     var errorDescription: String? { message }
 }
 
+/// Renders everything Apple tells us about a failed request, so the device
+/// screen becomes a usable diagnostic instead of "no connection".
+enum ErrorReport {
+    static func describe(_ error: Error, request: URLRequest) -> String {
+        let ns = error as NSError
+        let url = request.url?.absoluteString ?? "(no url)"
+        return [
+            "\(ns.domain) \(ns.code)",
+            ns.localizedDescription,
+            "URL: \(url)",
+        ].joined(separator: "\n")
+    }
+}
+
 private struct ServerErrorEnvelope: Decodable {
     struct Payload: Decodable {
         let code: String
@@ -95,11 +109,11 @@ struct APIClient {
         } catch let error as APIError {
             throw error
         } catch is DecodingError {
-            throw APIError(message: "Сервер повернув неочікуваний формат даних")
+            throw APIError(message: "Сервер повернув неочікуваний формат даних\nURL: \(request.url?.absoluteString ?? "?")")
         } catch {
-            let host = baseURL.host ?? "?"
-            let port = baseURL.port.map(String.init) ?? ""
-            throw APIError(message: "Немає звʼязку з сервером \(host)\(port.isEmpty ? "" : ":\(port)"). Перевірте інтернет.")
+            let report = ErrorReport.describe(error, request: request)
+            print("[MarketApp] request failed:\n\(report)")
+            throw APIError(message: "Немає звʼязку з сервером\n\(report)")
         }
     }
 
