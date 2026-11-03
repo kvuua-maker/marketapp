@@ -28,11 +28,13 @@ export function migrate(db, logger) {
   if (addColumn('orders', 'ttn', 'TEXT')) added += 1;
   if (addColumn('orders', 'ttn_status', 'TEXT')) added += 1;
   if (addColumn('orders', 'client_token_hash', 'TEXT')) added += 1;
+  if (addColumn('orders', 'user_id', 'TEXT')) added += 1;
   if (addColumn('reviews', 'hidden', 'INTEGER NOT NULL DEFAULT 0')) added += 1;
 
   db.exec('CREATE INDEX IF NOT EXISTS idx_products_title_norm ON products(title_norm)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_orders_phone ON orders(phone_norm)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_orders_token ON orders(client_token_hash)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_orders_user ON orders(user_id)');
 
   // Backfill normalised search columns for rows inserted before this migration.
   const pending = db.prepare("SELECT COUNT(*) AS c FROM products WHERE title_norm IS NULL").get().c;

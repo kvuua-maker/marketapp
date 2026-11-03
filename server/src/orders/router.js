@@ -98,7 +98,7 @@ function loadProducts(db, items) {
  * Creates an order and routes every line to its supplier automatically.
  * No owner interaction: API order or supplier email queued in the outbox.
  */
-export async function createOrder({ db, adapters, config, logger, payload, novaPoshta, clientTokenHash = null }) {
+export async function createOrder({ db, adapters, config, logger, payload, novaPoshta, clientTokenHash = null, userId = null }) {
   const customer = validateCustomer(payload?.customer);
   const items = validateItems(payload?.items);
   const products = loadProducts(db, items);
@@ -116,16 +116,17 @@ export async function createOrder({ db, adapters, config, logger, payload, novaP
   transaction(db, () => {
     run(
       db,
-      `INSERT INTO orders (id, client_order_id, customer_json, phone_norm, client_token_hash, total_cents, currency, status, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, 'UAH', 'routing', ?)`,
+      `INSERT INTO orders (id, client_order_id, customer_json, phone_norm, client_token_hash, user_id, total_cents, currency, status, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'UAH', 'routing', ?)`,
       {
         1: orderId,
         2: payload?.clientOrderId ? String(payload.clientOrderId) : null,
         3: JSON.stringify(customer),
         4: normPhone(customer.phone),
         5: clientTokenHash,
-        6: totalCents,
-        7: now,
+        6: userId,
+        7: totalCents,
+        8: now,
       },
     );
 

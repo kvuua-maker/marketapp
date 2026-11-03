@@ -72,6 +72,7 @@ CREATE TABLE IF NOT EXISTS orders (
   customer_json   TEXT NOT NULL,
   phone_norm      TEXT,                            -- +380XXXXXXXXX for order history
   client_token_hash TEXT,                          -- sha256(device token): owner-only history
+  user_id         TEXT,                            -- filled after optional Apple sign-in
   ttn             TEXT,                            -- Nova Poshta waybill
   ttn_status      TEXT,
   total_cents     INTEGER NOT NULL,
@@ -183,3 +184,34 @@ CREATE TRIGGER IF NOT EXISTS products_au AFTER UPDATE ON products BEGIN
   INSERT INTO products_fts(id, title, description, category, brand)
   VALUES (new.id, new.title, new.description, new.category, new.vendor);
 END;
+
+-- ── Optional Sign in with Apple + cross-device sync ──────────────────────
+CREATE TABLE IF NOT EXISTS users (
+  id          TEXT PRIMARY KEY,
+  apple_sub   TEXT UNIQUE NOT NULL,
+  email       TEXT,
+  name        TEXT,
+  created_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+  token_hash  TEXT PRIMARY KEY,
+  user_id     TEXT NOT NULL,
+  created_at  TEXT NOT NULL,
+  expires_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS user_profiles (
+  user_id        TEXT PRIMARY KEY,
+  phone          TEXT,
+  addresses_json TEXT,
+  updated_at     TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS user_carts (
+  user_id     TEXT PRIMARY KEY,
+  cart_json   TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);

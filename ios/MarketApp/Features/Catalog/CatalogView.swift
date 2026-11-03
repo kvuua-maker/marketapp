@@ -23,10 +23,6 @@ struct CatalogView: View {
         Array(repeating: GridItem(.flexible(), spacing: Theme.gridSpacing), count: columnCount)
     }
 
-    private var imageHeight: CGFloat {
-        columnCount >= 4 ? 165 : 175
-    }
-
     var body: some View {
         VStack(spacing: 0) {
             header
@@ -208,11 +204,11 @@ struct CatalogView: View {
         LazyVGrid(columns: columns, spacing: Theme.gridSpacing) {
             if catalog.isInitialLoading {
                 ForEach(0..<8, id: \.self) { _ in
-                    SkeletonTile(imageHeight: imageHeight)
+                    SkeletonTile()
                 }
             } else {
                 ForEach(catalog.products) { product in
-                    ProductTile(product: product, imageHeight: imageHeight)
+                    ProductTile(product: product)
                 }
             }
         }

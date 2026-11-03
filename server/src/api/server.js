@@ -16,6 +16,8 @@ import { moderateReview } from '../services/reviewModerator.js';
 import { handleImageProxy } from '../services/imageProxy.js';
 import { NovaPoshtaService } from '../services/novaPoshta.js';
 import { searchCities } from '../services/uaCities.js';
+import { verifyAppleIdentityToken } from '../auth/apple.js';
+import { createSession, destroySession, userFromRequest } from '../auth/session.js';
 
 const MAX_BODY_BYTES = 256 * 1024;
 
@@ -56,6 +58,12 @@ function rateLimit(key, limit, windowMs) {
   if (entry.count > limit) {
     throw new RateLimitError('Забагато запитів. Спробуйте трохи пізніше.');
   }
+}
+
+function requireUser(db, req) {
+  const userId = userFromRequest(db, req);
+  if (!userId) throw new UnauthorizedError('Потрібен вхід через Apple ID');
+  return userId;
 }
 
 function clientKey(req) {
@@ -663,15 +671,145 @@ export function createAppServer({ db, adapters, ai, config, logger, syncTrigger 
         return;
       }
 
-      if (req.method === 'GET' && path === '/v1/orders') {
-        const token = requireClientToken(req);
-        const phone = normPhone(url.searchParams.get('phone'));
-        if (!phone) throw new ValidationError('Вкажіть коректний номер телефону', [{ field: 'phone' }]);
-        const orders = all(
+      // ── Optional Sign in with Apple + cross-device sync ────────────────
+      if (req.method === 'POST' && path === '/v1/auth/apple') {
+        const body = await readJsonBody(req);
+        const identityToken = String(body?.identityToken ?? '');
+        if (!identityToken) throw new ValidationError('Потрібен identityToken', [{ field: 'identityToken' }]);
+
+        const payload = await verifyAppleIdentityToken(identityToken, config.appleClientId);
+        const appleSub = String(payload.sub);
+        const now = new Date().toISOString();
+        const fullName = String(body?.fullName ?? '').trim().slice(0, 80);
+
+        let user = get(db, 'SELECT * FROM users WHERE apple_sub = ?', [appleSub]);
+        if (!user) {
+          const id = `usr_${randomUUID().slice(0, 12)}`;
+          run(db, 'INSERT INTO users (id, apple_sub, email, name, created_at) VALUES (?, ?, ?, ?, ?)', [
+            id,
+            appleSub,
+            payload.email ? String(payload.email).slice(0, 120) : null,
+            fullName || null,
+            now,
+          ]);
+          user = { id };
+        } else if (fullName) {
+          run(db, 'UPDATE users SET name = ? WHERE id = ?', [fullName, user.id]);
+        }
+
+        const sessionToken = createSession(db, user.id);
+
+        // Orders placed on this device before signing in become part of the account.
+        let ordersClaimed = 0;
+        const deviceToken = clientTokenFrom(req);
+        if (deviceToken) {
+          const result = run(db, 'UPDATE orders SET user_id = ? WHERE client_token_hash = ? AND user_id IS NULL', [
+            user.id,
+            tokenHash(deviceToken),
+          ]);
+          ordersClaimed = Number(result?.changes ?? 0);
+        }
+
+        sendJson(res, 200, {
+          sessionToken,
+          user: { id: user.id, email: payload.email ?? null, name: fullName || null },
+          ordersClaimed,
+        }, { 'cache-control': 'no-store' });
+        return;
+      }
+
+      if (req.method === 'POST' && path === '/v1/auth/logout') {
+        destroySession(db, req);
+        sendJson(res, 200, { signedOut: true }, { 'cache-control': 'no-store' });
+        return;
+      }
+
+      if (path === '/v1/profile' && (req.method === 'GET' || req.method === 'PUT')) {
+        const userId = requireUser(db, req);
+
+        if (req.method === 'GET') {
+          const row = get(db, 'SELECT phone, addresses_json, updated_at FROM user_profiles WHERE user_id = ?', [userId]);
+          sendJson(res, 200, {
+            phone: row?.phone ?? null,
+            addresses: row?.addresses_json ? JSON.parse(row.addresses_json) : [],
+            updatedAt: row?.updated_at ?? null,
+          }, { 'cache-control': 'no-store' });
+          return;
+        }
+
+        const body = await readJsonBody(req);
+        const phone = String(body?.phone ?? '').slice(0, 24);
+        const addresses = Array.isArray(body?.addresses) ? body.addresses.slice(0, 10) : [];
+        const cleaned = addresses
+          .filter((item) => item && typeof item === 'object')
+          .map((item) => ({
+            label: String(item.label ?? '').slice(0, 40),
+            city: String(item.city ?? '').slice(0, 80),
+            branch: String(item.branch ?? '').slice(0, 160),
+          }));
+
+        run(
           db,
-          'SELECT * FROM orders WHERE phone_norm = ? AND client_token_hash = ? ORDER BY created_at DESC LIMIT 50',
-          [phone, tokenHash(token)],
+          `INSERT INTO user_profiles (user_id, phone, addresses_json, updated_at) VALUES (?, ?, ?, ?)
+           ON CONFLICT(user_id) DO UPDATE SET phone = excluded.phone,
+             addresses_json = excluded.addresses_json, updated_at = excluded.updated_at`,
+          [userId, phone || null, JSON.stringify(cleaned), new Date().toISOString()],
         );
+        sendJson(res, 200, { saved: true }, { 'cache-control': 'no-store' });
+        return;
+      }
+
+      if (path === '/v1/cart' && (req.method === 'GET' || req.method === 'PUT')) {
+        const userId = requireUser(db, req);
+
+        if (req.method === 'GET') {
+          const row = get(db, 'SELECT cart_json, updated_at FROM user_carts WHERE user_id = ?', [userId]);
+          sendJson(res, 200, {
+            items: row?.cart_json ? JSON.parse(row.cart_json) : [],
+            updatedAt: row?.updated_at ?? null,
+          }, { 'cache-control': 'no-store' });
+          return;
+        }
+
+        const body = await readJsonBody(req);
+        const rawItems = Array.isArray(body?.items) ? body.items.slice(0, 100) : [];
+        const items = rawItems
+          .filter((item) => item && typeof item === 'object' && item.productId)
+          .map((item) => ({
+            productId: String(item.productId).slice(0, 80),
+            qty: Math.min(Math.max(Number.parseInt(item.qty ?? 1, 10) || 1, 1), 10),
+          }));
+
+        run(
+          db,
+          `INSERT INTO user_carts (user_id, cart_json, updated_at) VALUES (?, ?, ?)
+           ON CONFLICT(user_id) DO UPDATE SET cart_json = excluded.cart_json, updated_at = excluded.updated_at`,
+          [userId, JSON.stringify(items), new Date().toISOString()],
+        );
+        sendJson(res, 200, { saved: true, count: items.length }, { 'cache-control': 'no-store' });
+        return;
+      }
+
+      if (req.method === 'GET' && path === '/v1/orders') {
+        const userId = userFromRequest(db, req);
+        let orders;
+
+        if (userId) {
+          orders = all(
+            db,
+            'SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC LIMIT 50',
+            [userId],
+          );
+        } else {
+          const token = requireClientToken(req);
+          const phone = normPhone(url.searchParams.get('phone'));
+          if (!phone) throw new ValidationError('Вкажіть коректний номер телефону', [{ field: 'phone' }]);
+          orders = all(
+            db,
+            'SELECT * FROM orders WHERE phone_norm = ? AND client_token_hash = ? ORDER BY created_at DESC LIMIT 50',
+            [phone, tokenHash(token)],
+          );
+        }
         const items = orders.length
           ? all(
               db,
@@ -721,6 +859,7 @@ export function createAppServer({ db, adapters, ai, config, logger, syncTrigger 
           payload,
           novaPoshta,
           clientTokenHash: token ? tokenHash(token) : null,
+          userId: userFromRequest(db, req),
         });
         sendJson(res, 201, result, { 'cache-control': 'no-store' });
         return;

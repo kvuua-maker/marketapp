@@ -217,6 +217,41 @@ jobs:
             [ "$CODE" = "201" ] || { cat "$RUNNER_TEMP/bid-resp.json"; exit 1; }
           fi
 
+      - name: Ensure Sign in with Apple capability
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          curl -s -o "$RUNNER_TEMP/bundles.json" -H "Authorization: Bearer $ASC_TOKEN" "$API/bundleIds?limit=200"
+          export IDENT="$APP_BUNDLE"
+          BID=$(node -e '
+            const fs = require("fs");
+            const d = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + "/bundles.json", "utf8"));
+            const b = (d.data || []).find(x => x.attributes.identifier === process.env.IDENT);
+            if (!b) process.exit(4);
+            process.stdout.write(b.id);
+          ')
+          curl -s -o "$RUNNER_TEMP/caps.json" -H "Authorization: Bearer $ASC_TOKEN" "$API/bundleIds/$BID/bundleIdCapabilities?limit=200"
+          HAS=$(node -e '
+            const fs = require("fs");
+            let d = {};
+            try { d = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + "/caps.json", "utf8")); } catch (e) {}
+            const rows = d.data || [];
+            process.stdout.write(rows.some(r => r.attributes && r.attributes.capabilityType === "APPLE_ID_AUTH") ? "yes" : "no");
+          ')
+          if [ "$HAS" = "yes" ]; then
+            echo "APPLE_ID_AUTH already enabled on $APP_BUNDLE"
+            exit 0
+          fi
+          printf '{"data":{"type":"bundleIdCapabilities","attributes":{"capabilityType":"APPLE_ID_AUTH"},"relationships":{"bundleId":{"data":{"type":"bundleIds","id":"%s"}}}}}' "$BID" > "$RUNNER_TEMP/cap.json"
+          CODE=$(curl -s -o "$RUNNER_TEMP/cap-resp.json" -w '%{http_code}' -X POST \
+            -H "Authorization: Bearer $ASC_TOKEN" -H 'Content-Type: application/json' \
+            --data @"$RUNNER_TEMP/cap.json" "$API/bundleIdCapabilities")
+          echo "enable APPLE_ID_AUTH -> HTTP $CODE"
+          if [ "$CODE" != "201" ] && [ "$CODE" != "200" ] && [ "$CODE" != "409" ]; then
+            cat "$RUNNER_TEMP/cap-resp.json" || true
+            echo "::warning::Sign in with Apple capability could not be enabled automatically (HTTP $CODE)."
+          fi
+
       - name: Create the App Store provisioning profile
         run: |
           set -euo pipefail

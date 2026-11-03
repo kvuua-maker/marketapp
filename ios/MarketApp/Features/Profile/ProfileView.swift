@@ -1,9 +1,11 @@
 import SwiftUI
+import AuthenticationServices
 
 struct ProfileView: View {
     @EnvironmentObject private var profile: ProfileStore
     @EnvironmentObject private var favorites: FavoritesStore
     @EnvironmentObject private var cart: CartStore
+    @ObservedObject private var auth = AuthStore.shared
 
     @State private var orders: [OrderSummary] = []
     @State private var favoriteProducts: [Product] = []
@@ -19,6 +21,7 @@ struct ProfileView: View {
             ordersSection
             favoritesSection
             addressesSection
+            authSection
             settingsSection
             legalSection
         }
@@ -157,6 +160,66 @@ struct ProfileView: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+            }
+        }
+    }
+
+    private var authSection: some View {
+        Section {
+            if auth.isSignedIn {
+                Label(
+                    auth.displayName.map { "Ви увійшли як \($0)" } ?? "Увійдено через Apple ID",
+                    systemImage: "person.crop.circle.badge.checkmark"
+                )
+                .font(.subheadline)
+
+                Button {
+                    Task { await auth.syncNow(cart: cart, profile: profile) }
+                } label: {
+                    Label("Синхронізувати зараз", systemImage: "arrow.triangle.2.circlepath")
+                }
+                .disabled(auth.isWorking)
+
+                Button(role: .destructive) {
+                    auth.signOut()
+                } label: {
+                    Label("Вийти", systemImage: "rectangle.portrait.and.arrow.right")
+                }
+            } else {
+                Text("Увійдіть, щоб синхронізувати кошик та історію між iPhone та iPad")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+
+                SignInWithAppleButton(.signIn) { request in
+                    request.requestedScopes = [.fullName, .email]
+                } onCompletion: { result in
+                    Task { await auth.handleAuthorization(result, cart: cart, profile: profile) }
+                }
+                .signInWithAppleButtonStyle(.black)
+                .frame(height: 46)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .accessibilityLabel("Увійти через Apple ID")
+            }
+
+            if auth.isWorking {
+                HStack(spacing: 8) {
+                    ProgressView()
+                    Text("Синхронізація…").foregroundStyle(.secondary)
+                }
+            }
+
+            if let error = auth.errorMessage {
+                Text(error).font(.caption).foregroundStyle(.red)
+            }
+
+            if let info = auth.infoMessage {
+                Text(info).font(.caption).foregroundStyle(.green)
+            }
+        } header: {
+            Text("Синхронізація")
+        } footer: {
+            if !auth.isSignedIn {
+                Text("Вхід необовʼязковий: замовлення оформлюються без реєстрації, а історія працює на цьому пристрої.")
             }
         }
     }

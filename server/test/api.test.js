@@ -2,6 +2,19 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { makeDb, insertProduct, testConfig, logger } from './helpers.js';
 import { createAppServer } from '../src/api/server.js';
+import { run } from '../src/db/database.js';
+import { createSession } from '../src/auth/session.js';
+
+function makeUser(db, id = 'usr_test') {
+  run(db, 'INSERT INTO users (id, apple_sub, email, name, created_at) VALUES (?, ?, ?, ?, ?)', [
+    id,
+    `apple-${id}`,
+    null,
+    null,
+    new Date().toISOString(),
+  ]);
+  return createSession(db, id);
+}
 
 async function startServer(db) {
   const adapters = [{ id: 'aveopt', name: 'Aveopt' }];
@@ -151,6 +164,85 @@ test('analytics summary is protected by the admin bearer token', async () => {
   try {
     const response = await fetch(`${base}/v1/analytics/summary`);
     assert.equal(response.status, 401);
+  } finally {
+    server.close();
+  }
+});
+
+test('profile and cart sync need a session and round-trip', async () => {
+  const db = makeDb();
+  const token = makeUser(db);
+  const { server, base } = await startServer(db);
+
+  try {
+    const unauthorized = await fetch(`${base}/v1/profile`);
+    assert.equal(unauthorized.status, 401);
+
+    const putProfile = await fetch(`${base}/v1/profile`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        phone: '+380671112233',
+        addresses: [{ label: 'Дім', city: 'Київ', branch: 'Відділення №5' }],
+      }),
+    });
+    assert.equal(putProfile.status, 200);
+
+    const profile = await (await fetch(`${base}/v1/profile`, { headers: { authorization: `Bearer ${token}` } })).json();
+    assert.equal(profile.phone, '+380671112233');
+    assert.equal(profile.addresses.length, 1);
+
+    const putCart = await fetch(`${base}/v1/cart`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify({ items: [{ productId: 'aveopt:1', qty: 2 }] }),
+    });
+    assert.equal(putCart.status, 200);
+
+    const cart = await (await fetch(`${base}/v1/cart`, { headers: { authorization: `Bearer ${token}` } })).json();
+    assert.equal(cart.items.length, 1);
+    assert.equal(cart.items[0].qty, 2);
+  } finally {
+    server.close();
+  }
+});
+
+test('signed-in order history is account based (works from any device)', async () => {
+  const db = makeDb();
+  insertProduct(db, { id: 'aveopt:1', stock: 10 });
+  const token = makeUser(db);
+  const { server, base } = await startServer(db);
+
+  try {
+    const created = await fetch(`${base}/v1/orders`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        customer: { fullName: 'Олена Шевченко', phone: '+380671112233', city: 'Київ', branch: 'Відділення №12' },
+        items: [{ productId: 'aveopt:1', qty: 1 }],
+      }),
+    });
+    assert.equal(created.status, 201);
+
+    const history = await fetch(`${base}/v1/orders`, { headers: { authorization: `Bearer ${token}` } });
+    assert.equal(history.status, 200);
+    const body = await history.json();
+    assert.equal(body.items.length, 1, 'account history must not depend on the device token');
+  } finally {
+    server.close();
+  }
+});
+
+test('apple sign-in rejects a malformed identity token', async () => {
+  const db = makeDb();
+  const { server, base } = await startServer(db);
+  try {
+    const response = await fetch(`${base}/v1/auth/apple`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ identityToken: 'not-a-jwt' }),
+    });
+    assert.equal(response.status, 422);
   } finally {
     server.close();
   }

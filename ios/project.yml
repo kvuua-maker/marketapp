@@ -24,6 +24,10 @@ targets:
       - path: MarketApp
         excludes:
           - "Resources/Info.plist"
+    entitlements:
+      path: MarketApp.entitlements
+      properties:
+        com.apple.developer.applesignin: [Default]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.marketapp.store

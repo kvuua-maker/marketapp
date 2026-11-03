@@ -7,7 +7,6 @@ import SwiftUI
 /// iPad the link can never swallow the button taps.
 struct ProductTile: View {
     let product: Product
-    var imageHeight: CGFloat = 170
 
     @EnvironmentObject private var cart: CartStore
     @EnvironmentObject private var favorites: FavoritesStore
@@ -18,10 +17,17 @@ struct ProductTile: View {
     var body: some View {
         ZStack(alignment: .bottom) {
             NavigationLink(value: product) {
-                content
-                    .padding(10)
-                    .padding(.bottom, buyBarHeight)
-                    .contentShape(Rectangle())
+                VStack(alignment: .leading, spacing: 8) {
+                    photo
+                    titleLabel
+                    priceRow
+                    ratingRow
+                    Spacer(minLength: 0)
+                }
+                .padding(10)
+                .padding(.bottom, buyBarHeight)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
 
@@ -30,6 +36,8 @@ struct ProductTile: View {
                 .padding(.bottom, 10)
                 .zIndex(1)
         }
+        // Every card stretches to the tallest one in its row.
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(Color(.secondarySystemGroupedBackground))
         .clipShape(RoundedRectangle(cornerRadius: Theme.corner, style: .continuous))
         .overlay(
@@ -43,17 +51,20 @@ struct ProductTile: View {
         }
     }
 
-    // MARK: - Content (tappable → product)
+    // MARK: - Content
 
-    private var content: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            ZStack(alignment: .topLeading) {
-                CachedAsyncImage(url: APIClient.imageURL(product.imageUrl, width: 500))
-                    .frame(height: imageHeight)
-                    .frame(maxWidth: .infinity)
-                    .clipped()
-                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-
+    /// Perfect square at any column width; the photo is cropped, never stretched.
+    private var photo: some View {
+        Color.clear
+            .aspectRatio(1, contentMode: .fit)
+            .overlay {
+                CachedAsyncImage(
+                    url: APIClient.imageURL(product.imageUrl, width: 500),
+                    contentMode: .fill
+                )
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(alignment: .topLeading) {
                 HStack(spacing: 6) {
                     if product.discountPercent > 0 {
                         Text("-\(product.discountPercent)%")
@@ -73,45 +84,54 @@ struct ProductTile: View {
                 }
                 .padding(8)
             }
+    }
 
-            Text(product.title)
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(.primary)
-                .lineLimit(2)
-                .multilineTextAlignment(.leading)
-                .frame(minHeight: 38, alignment: .topLeading)
+    /// Always reserves two lines so long titles cannot change the card height.
+    private var titleLabel: some View {
+        Text(product.title)
+            .font(.subheadline.weight(.medium))
+            .foregroundStyle(.primary)
+            .lineLimit(2, reservesSpace: true)
+            .truncationMode(.tail)
+            .multilineTextAlignment(.leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
 
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text(Money.uah(cents: product.priceCents))
-                    .font(.headline)
-                if let old = product.oldPriceCents, old > product.priceCents {
-                    Text(Money.uah(cents: old))
-                        .font(.caption)
-                        .strikethrough()
-                        .foregroundStyle(.secondary)
-                }
-                Spacer(minLength: 0)
+    private var priceRow: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(Money.uah(cents: product.priceCents))
+                .font(.headline)
+            if let old = product.oldPriceCents, old > product.priceCents {
+                Text(Money.uah(cents: old))
+                    .font(.caption)
+                    .strikethrough()
+                    .foregroundStyle(.secondary)
             }
-
-            HStack(spacing: 4) {
-                if product.ratingCount > 0 {
-                    Image(systemName: "star.fill")
-                        .font(.caption2)
-                        .foregroundStyle(.orange)
-                    Text(String(format: "%.1f", product.rating))
-                        .font(.caption2)
-                    Text("(\(product.ratingCount))")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                } else if let vendor = product.vendor, !vendor.isEmpty {
-                    Text(vendor)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-                Spacer(minLength: 0)
-            }
+            Spacer(minLength: 0)
         }
+        .frame(height: 20, alignment: .leading)
+    }
+
+    private var ratingRow: some View {
+        HStack(spacing: 4) {
+            if product.ratingCount > 0 {
+                Image(systemName: "star.fill")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                Text(String(format: "%.1f", product.rating))
+                    .font(.caption2)
+                Text("(\(product.ratingCount))")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            } else if let vendor = product.vendor, !vendor.isEmpty {
+                Text(vendor)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(height: 16, alignment: .leading)
     }
 
     // MARK: - Controls (own layer)
@@ -137,6 +157,7 @@ struct ProductTile: View {
         .buttonStyle(.borderedProminent)
         .controlSize(.small)
         .disabled(!product.isAvailable)
+        .accessibilityLabel(justAdded ? "Додано в кошик" : "Купити \(product.title)")
     }
 
     private var favoriteButton: some View {
@@ -158,19 +179,21 @@ struct ProductTile: View {
 // MARK: - Skeleton
 
 struct SkeletonTile: View {
-    var imageHeight: CGFloat = 170
     @State private var dim = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color(.tertiarySystemFill))
-                .frame(height: imageHeight)
+            Color.clear
+                .aspectRatio(1, contentMode: .fit)
+                .background(Color(.tertiarySystemFill), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+
             RoundedRectangle(cornerRadius: 4).fill(Color(.tertiarySystemFill)).frame(height: 12)
-            RoundedRectangle(cornerRadius: 4).fill(Color(.tertiarySystemFill)).frame(width: 90, height: 12)
-            RoundedRectangle(cornerRadius: 6).fill(Color(.tertiarySystemFill)).frame(width: 70, height: 18)
+            RoundedRectangle(cornerRadius: 4).fill(Color(.tertiarySystemFill)).frame(height: 12)
+            Spacer(minLength: 8)
+            RoundedRectangle(cornerRadius: 6).fill(Color(.tertiarySystemFill)).frame(height: 26)
         }
         .padding(10)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .cardSurface()
         .opacity(dim ? 0.55 : 1)
         .animation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true), value: dim)

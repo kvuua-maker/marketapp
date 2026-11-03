@@ -19,6 +19,16 @@ enum ErrorReport {
     }
 }
 
+private extension URLRequest {
+    /// Adds the optional Apple-ID session so order history and sync work
+    /// across devices. Guests simply send the device token.
+    mutating func applySessionToken() {
+        if let token = SessionStore.token {
+            setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+    }
+}
+
 private struct ServerErrorEnvelope: Decodable {
     struct Payload: Decodable {
         let code: String
@@ -144,6 +154,63 @@ struct APIClient {
         try await get("/v1/products/\(encoded(productId))/reviews")
     }
 
+    // MARK: - Optional Sign in with Apple
+
+    private struct AppleSignInBody: Encodable {
+        let identityToken: String
+        let fullName: String?
+    }
+
+    func signInWithApple(identityToken: String, fullName: String?) async throws -> AuthResponse {
+        try await post(
+            "/v1/auth/apple",
+            body: AppleSignInBody(identityToken: identityToken, fullName: fullName)
+        )
+    }
+
+    func signOut() async throws -> SignedOutResult {
+        try await post("/v1/auth/logout", body: [String: String]())
+    }
+
+    func remoteProfile() async throws -> RemoteProfile {
+        try await get("/v1/profile")
+    }
+
+    func saveRemoteProfile(phone: String, addresses: [SavedAddress]) async throws -> RemoteSaveResult {
+        struct AddressBody: Encodable {
+            let label: String
+            let city: String
+            let branch: String
+        }
+        struct Body: Encodable {
+            let phone: String
+            let addresses: [AddressBody]
+        }
+        let payload = Body(
+            phone: phone,
+            addresses: addresses.map { AddressBody(label: $0.label, city: $0.city, branch: $0.branch) }
+        )
+        return try await post("/v1/profile", body: payload)
+    }
+
+    func remoteCart() async throws -> RemoteCart {
+        try await get("/v1/cart")
+    }
+
+    func saveRemoteCart(items: [OrderItemInput]) async throws -> RemoteSaveResult {
+        struct ItemBody: Encodable {
+            let productId: String
+            let qty: Int
+        }
+        struct Body: Encodable {
+            let items: [ItemBody]
+        }
+        return try await post(
+            "/v1/cart",
+            body: Body(items: items.map { ItemBody(productId: $0.productId, qty: $0.qty) })
+        )
+    }
+
     func reportReview(id: Int, reason: String) async throws -> ReviewReportResult {
         try await post("/v1/reviews/\(id)/report", body: ["reason": reason])
     }
@@ -180,6 +247,7 @@ struct APIClient {
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue(ClientIdentity.token, forHTTPHeaderField: "X-Client-Token")
+        request.applySessionToken()
         return try await send(request)
     }
 
@@ -189,6 +257,7 @@ struct APIClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue(ClientIdentity.token, forHTTPHeaderField: "X-Client-Token")
+        request.applySessionToken()
         request.httpBody = try JSONEncoder().encode(body)
         return try await send(request)
     }
@@ -199,6 +268,7 @@ struct APIClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue(ClientIdentity.token, forHTTPHeaderField: "X-Client-Token")
+        request.applySessionToken()
         request.httpBody = try JSONEncoder().encode(body)
         return try await send(request)
     }
