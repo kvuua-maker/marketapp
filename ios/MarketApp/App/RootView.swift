@@ -1,13 +1,20 @@
 import SwiftUI
+import UIKit
 
 struct RootView: View {
     @StateObject private var cart = CartStore()
     @StateObject private var catalog = CatalogViewModel()
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
+    /// Universal app: the device decides the shell, not the size class.
+    /// iPhone keeps TabView even in landscape (wide iPhone would otherwise
+    /// report a regular size class and "turn into" an iPad layout).
+    private var isPad: Bool {
+        UIDevice.current.userInterfaceIdiom == .pad
+    }
 
     var body: some View {
         Group {
-            if horizontalSizeClass == .regular {
+            if isPad {
                 SplitRootView()
             } else {
                 TabRootView()
@@ -18,22 +25,30 @@ struct RootView: View {
     }
 }
 
-/// iPad: full-screen NavigationSplitView with categories on the left.
+enum SidebarItem: Hashable {
+    case all
+    case cart
+    case category(String)
+}
+
+/// iPad: full-screen NavigationSplitView with a persistent sidebar.
+/// The catalog always occupies the whole detail area — no floating windows,
+/// no iPhone-sized column in the middle of the screen.
 struct SplitRootView: View {
     @EnvironmentObject private var catalog: CatalogViewModel
+    @EnvironmentObject private var cart: CartStore
 
-    private var selection: Binding<String?> {
-        Binding(
-            get: { catalog.selectedCategory },
-            set: { catalog.selectCategory($0) }
-        )
-    }
+    @State private var selection: SidebarItem? = .all
 
     var body: some View {
         NavigationSplitView {
-            List(selection: selection) {
+            List(selection: $selection) {
                 Label("Усі товари", systemImage: "square.grid.2x2")
-                    .tag(String?.none)
+                    .tag(SidebarItem.all)
+
+                Label("Кошик", systemImage: "cart")
+                    .badge(cart.count)
+                    .tag(SidebarItem.cart)
 
                 Section("Категорії") {
                     ForEach(catalog.categories) { category in
@@ -43,26 +58,45 @@ struct SplitRootView: View {
                             Spacer(minLength: 4)
                             Text("\(category.count)")
                                 .font(.caption)
+                                .monospacedDigit()
                                 .foregroundStyle(.secondary)
                         }
-                        .tag(Optional(category.name))
+                        .tag(SidebarItem.category(category.name))
                     }
                 }
             }
             .listStyle(.sidebar)
             .navigationTitle("MarketApp")
+            .navigationSplitViewColumnWidth(min: 240, ideal: 300, max: 360)
         } detail: {
             NavigationStack {
-                CatalogView()
-                    .navigationDestination(for: Product.self) { product in
-                        ProductDetailView(product: product)
-                    }
+                switch selection ?? .all {
+                case .cart:
+                    CartView()
+                case .category(_), .all:
+                    CatalogView()
+                }
+            }
+            .navigationDestination(for: Product.self) { product in
+                ProductDetailView(product: product)
             }
         }
+        .navigationSplitViewStyle(.balanced)
+        .onChange(of: selection) { _, newValue in
+            switch newValue ?? .all {
+            case .category(let name):
+                catalog.selectCategory(name)
+            case .all:
+                catalog.selectCategory(nil)
+            case .cart:
+                break
+            }
+        }
+        .task { await catalog.bootstrap() }
     }
 }
 
-/// iPhone: TabView with catalog and cart only (no admin, no payment screens).
+/// iPhone: standard bottom TabView with catalog and cart only.
 struct TabRootView: View {
     @EnvironmentObject private var cart: CartStore
 

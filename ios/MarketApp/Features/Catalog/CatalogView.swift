@@ -1,23 +1,58 @@
 import SwiftUI
 
+private struct ContentWidthKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
 struct CatalogView: View {
     @EnvironmentObject private var catalog: CatalogViewModel
+    @State private var contentWidth: CGFloat = 0
 
-    private let columns = [GridItem(.adaptive(minimum: 160), spacing: 14)]
+    /// iPad gets a desktop-grade grid: 4–5 columns across the full screen.
+    /// iPhone stays at 2 columns.
+    private var columnCount: Int {
+        switch contentWidth {
+        case 1000...: return 5
+        case 800..<1000: return 4
+        case 600..<800: return 3
+        default: return 2
+        }
+    }
+
+    private var columns: [GridItem] {
+        Array(repeating: GridItem(.flexible(), spacing: 16), count: columnCount)
+    }
+
+    private var imageHeight: CGFloat {
+        switch columnCount {
+        case 5: return 165
+        case 4: return 180
+        case 3: return 190
+        default: return 150
+        }
+    }
 
     var body: some View {
         ScrollView {
-            LazyVGrid(columns: columns, spacing: 14) {
+            LazyVGrid(columns: columns, spacing: 16) {
                 ForEach(catalog.products) { product in
                     NavigationLink(value: product) {
-                        ProductCard(product: product)
+                        ProductCard(product: product, imageHeight: imageHeight)
                     }
                     .buttonStyle(.plain)
                     .task { await catalog.loadMore(after: product) }
                 }
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+            .background(
+                GeometryReader { proxy in
+                    Color.clear.preference(key: ContentWidthKey.self, value: proxy.size.width)
+                }
+            )
 
             if catalog.isLoadingMore {
                 ProgressView()
@@ -25,8 +60,11 @@ struct CatalogView: View {
             }
         }
         .background(Color(.systemGroupedBackground))
+        .onPreferenceChange(ContentWidthKey.self) { width in
+            if width > 0 { contentWidth = width }
+        }
         .navigationTitle(catalog.selectedCategory ?? "Каталог")
-        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarTitleDisplayMode(.automatic)
         .searchable(text: $catalog.searchText, prompt: "Пошук товарів")
         .onChange(of: catalog.searchText) { _, _ in
             catalog.searchChanged()
