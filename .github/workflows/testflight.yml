@@ -52,7 +52,12 @@ jobs:
           [ -z "${TEAM_ID:-}" ] && { echo "::error::APPLE_TEAM_ID is missing"; MISSING=1; }
           [ -z "${APP_BUNDLE:-}" ] && { echo "::error::APP_BUNDLE_ID is missing"; MISSING=1; }
           if [ "$MISSING" = "1" ]; then exit 1; fi
-          echo "Secrets OK: key ${#ASC_KEY_ID} chars, issuer ${#ASC_ISSUER_ID} chars, team $TEAM_ID, bundle $APP_BUNDLE"
+          echo "Secrets OK: key ${#ASC_KEY_ID} chars, issuer ${#ASC_ISSUER_ID} chars, team $TEAM_ID"
+          echo "Bundle suffix: ${APP_BUNDLE##*.}"
+          case "$APP_BUNDLE" in
+            *vakansio*|*Vakansio*) echo "::error::APP_BUNDLE_ID looks like another project's id ($APP_BUNDLE). Set it to the MarketApp bundle id."; exit 1;;
+          esac
+          echo "Bundle id length: ${#APP_BUNDLE}"
 
       - name: Select the newest Xcode
         run: |
@@ -283,6 +288,7 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             DEVELOPMENT_TEAM="$TEAM_ID" \
+            PRODUCT_BUNDLE_IDENTIFIER="$APP_BUNDLE" \
             CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
             MARKETING_VERSION="$MARKETING_VERSION" 2>&1 | tail -n 25
 
