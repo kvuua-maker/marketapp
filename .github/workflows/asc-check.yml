@@ -1,0 +1,67 @@
+name: ASC check
+
+# Fast diagnostics for App Store Connect (ubuntu, no macOS runner needed).
+# Lists the app records and bundle ids visible to the configured API key.
+
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/asc-check.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  list:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      API: https://api.appstoreconnect.apple.com/v1
+      ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID || secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID || secrets.ASC_ISSUER_ID }}
+      ASC_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_KEY || secrets.ASC_PRIVATE_KEY }}
+      APP_BUNDLE: ${{ secrets.APP_BUNDLE_ID }}
+    steps:
+      - name: Mint JWT
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/private_keys"
+          printf '%s' "$ASC_PRIVATE_KEY" | tr -d '\r' > "$RUNNER_TEMP/private_keys/AuthKey_$ASC_KEY_ID.p8"
+          export ASC_KEY_PATH="$RUNNER_TEMP/private_keys/AuthKey_$ASC_KEY_ID.p8"
+          cat > "$RUNNER_TEMP/jwt.js" <<'JS'
+          const fs = require('fs'), crypto = require('crypto');
+          const key = fs.readFileSync(process.env.ASC_KEY_PATH, 'utf8');
+          const b64 = o => Buffer.from(JSON.stringify(o)).toString('base64url');
+          const now = Math.floor(Date.now() / 1000);
+          const input = b64({ alg: 'ES256', kid: process.env.ASC_KEY_ID, typ: 'JWT' }) + '.' +
+                        b64({ iss: process.env.ASC_ISSUER_ID, iat: now, exp: now + 600, aud: 'appstoreconnect-v1' });
+          const sig = crypto.sign('sha256', Buffer.from(input), { key, dsaEncoding: 'ieee-p1363' }).toString('base64url');
+          process.stdout.write(input + '.' + sig);
+          JS
+          echo "ASC_TOKEN=$(node "$RUNNER_TEMP/jwt.js")" >> "$GITHUB_ENV"
+
+      - name: List app records
+        run: |
+          set -euo pipefail
+          echo "Configured APP_BUNDLE_ID suffix: ${APP_BUNDLE##*.}"
+          CODE=$(curl -s -o "$RUNNER_TEMP/apps.json" -w '%{http_code}' \
+            -H "Authorization: Bearer $ASC_TOKEN" "$API/apps?limit=50")
+          echo "GET /apps -> HTTP $CODE"
+          node -e '
+            const fs = require("fs");
+            const d = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + "/apps.json", "utf8"));
+            const rows = (d.data || []).map(a => a.attributes.bundleId + " — " + a.attributes.name);
+            console.log("app records: " + rows.length);
+            rows.forEach(r => console.log("  " + r));
+          '
+          CODE=$(curl -s -o "$RUNNER_TEMP/bids.json" -w '%{http_code}' \
+            -H "Authorization: Bearer $ASC_TOKEN" "$API/bundleIds?limit=200")
+          echo "GET /bundleIds -> HTTP $CODE"
+          node -e '
+            const fs = require("fs");
+            const d = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + "/bids.json", "utf8"));
+            const rows = (d.data || []).map(b => b.attributes.identifier);
+            console.log("bundle ids: " + rows.length);
+            rows.slice(0, 30).forEach(r => console.log("  " + r));
+          '
