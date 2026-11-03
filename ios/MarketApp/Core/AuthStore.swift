@@ -1,6 +1,10 @@
 import Foundation
 import AuthenticationServices
 
+/// Optional Apple sign-in. Requires the `com.apple.developer.applesignin`
+/// entitlement, which the App ID provides once the capability is enabled in
+/// the developer portal; CI verifies it in the signed app on every build.
+///
 /// Session token persisted between launches (optional Apple sign-in).
 enum SessionStore {
     private static let tokenKey = "marketapp.sessionToken"
