@@ -355,6 +355,12 @@ jobs:
             --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID" 2>&1 | tee "$RUNNER_TEMP/upload.log"
           RC=${PIPESTATUS[0]}
           set -e
+          VALIDATION_ERROR=$(grep -cE "Validation failed|ERROR: \[altool" "$RUNNER_TEMP/upload.log" || true)
+          if [ "$RC" = "0" ] && [ "$VALIDATION_ERROR" != "0" ]; then
+            echo "::error::App Store Connect rejected the build validation (altool exited 0). See the log above."
+            grep -E "Validation failed|ERROR: \[altool" "$RUNNER_TEMP/upload.log" | tail -3
+            exit 1
+          fi
           if [ "$RC" != "0" ]; then
             if grep -q "Cannot determine the Apple ID from Bundle ID" "$RUNNER_TEMP/upload.log"; then
               echo "::error title=App record missing::App Store Connect has no app for bundle id $APP_BUNDLE. Create it: App Store Connect -> My Apps -> + -> iOS -> Bundle ID $APP_BUNDLE -> name MarketApp. Then re-run this workflow (nothing else is needed)."
@@ -393,4 +399,5 @@ jobs:
               FAILED|INVALID) echo "::error::Build processing failed: $STATE"; exit 1;;
             esac
           done
-          echo "::warning::Build uploaded, but App Store Connect has not reported it yet (processing can take 10-30 minutes)."
+          echo "::error::Upload finished but App Store Connect never reported build $BUILD_NUMBER. The build is NOT in TestFlight."
+          exit 1
