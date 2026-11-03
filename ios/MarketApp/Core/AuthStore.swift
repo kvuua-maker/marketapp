@@ -41,7 +41,14 @@ final class AuthStore: ObservableObject {
     ) async {
         switch result {
         case .failure(let error):
-            if let authError = error as? ASAuthorizationError, authError.code == .canceled {
+            if let authError = error as? ASAuthorizationError {
+                if authError.code == .canceled { return }
+                if authError.code == .unknown {
+                    // error 1000: the App ID has no Sign in with Apple capability yet.
+                    errorMessage = "Вхід через Apple ID ще не активовано для цього застосунку. Увімкніть Sign in with Apple для App ID — після наступної збірки вхід запрацює."
+                    return
+                }
+                errorMessage = "Не вдалося увійти через Apple ID (код \(authError.code.rawValue)). Спробуйте пізніше."
                 return
             }
             errorMessage = "Не вдалося увійти через Apple ID: \(error.localizedDescription)"
