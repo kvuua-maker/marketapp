@@ -97,7 +97,9 @@ struct APIClient {
         } catch is DecodingError {
             throw APIError(message: "Сервер повернув неочікуваний формат даних")
         } catch {
-            throw APIError(message: "Немає звʼязку з сервером. Перевірте інтернет.")
+            let host = baseURL.host ?? "?"
+            let port = baseURL.port.map(String.init) ?? ""
+            throw APIError(message: "Немає звʼязку з сервером \(host)\(port.isEmpty ? "" : ":\(port)"). Перевірте інтернет.")
         }
     }
 

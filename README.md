@@ -40,7 +40,7 @@ cd server
 cp ../.env.example .env          # заповніть DEEPSEEK_API_KEY (опційно)
 npm test                         # 25 тестів, без залежностей
 npm run sync                     # розвідка + наповнення БД з Aveopt
-npm start                        # http://localhost:8899
+npm start                        # http://localhost:8899 (production: http://178.105.32.46:8899)
 ```
 
 ```bash
