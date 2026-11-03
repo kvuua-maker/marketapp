@@ -1,0 +1,16 @@
+{
+  "name": "marketapp-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "MarketApp backend: supplier adapters, AI enrichment, order routing",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "start": "node --no-warnings src/index.js",
+    "sync": "node --no-warnings scripts/sync-once.js",
+    "test": "node --no-warnings --test test/*.test.js",
+    "dev": "node --no-warnings --watch src/index.js"
+  }
+}

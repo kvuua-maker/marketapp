@@ -1,0 +1,27 @@
+# Node
+node_modules/
+npm-debug.log*
+server/data/*.db
+server/data/*.db-wal
+server/data/*.db-shm
+*.log
+
+# macOS / Xcode
+.DS_Store
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+*.xcworkspace/xcuserdata/
+ios/MarketApp.xcodeproj/
+
+# Env
+.env
+.env.local
+*.p8
+*.p12
+*.mobileprovision
+
+# Temp
+tmp/
+.cache/
