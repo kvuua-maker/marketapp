@@ -49,8 +49,8 @@ async function api(method, path, body) {
 }
 
 const files = [
-  { path: process.argv[2], type: 'APP_IPHONE_69', name: 'iphone-catalog.png' },
-  { path: process.argv[3], type: 'APP_IPAD_PRO_3GEN_129', name: 'ipad-catalog.png' },
+  { path: process.argv[2], types: ['APP_IPHONE_69', 'APP_IPHONE_67', 'APP_IPHONE_65'], name: 'iphone-catalog.png' },
+  { path: process.argv[3], types: ['APP_IPAD_PRO_3GEN_129', 'APP_IPAD_PRO_129'], name: 'ipad-catalog.png' },
 ].filter((entry) => entry.path);
 
 const apps = await api('GET', `/apps?filter%5BbundleId%5D=${BUNDLE}&limit=5`);
@@ -69,23 +69,41 @@ for (const file of files) {
   const size = statSync(file.path).size;
   console.log(`\n${file.name}: ${(size / 1024).toFixed(0)} KB, type ${file.type}`);
 
-  let setId = setByType.get(file.type);
+  let setId = file.types.map((type) => setByType.get(type)).find(Boolean);
   if (!setId) {
-    const created = await api('POST', '/appScreenshotSets', {
-      data: {
-        type: 'appScreenshotSets',
-        attributes: { screenshotDisplayType: file.type },
-        relationships: { appStoreVersionLocalization: { data: { type: 'appStoreVersionLocalizations', id: localization.id } } },
-      },
-    });
-    setId = created.body?.data?.id;
+    for (const type of file.types) {
+      const created = await api('POST', '/appScreenshotSets', {
+        data: {
+          type: 'appScreenshotSets',
+          attributes: { screenshotDisplayType: type },
+          relationships: { appStoreVersionLocalization: { data: { type: 'appStoreVersionLocalizations', id: localization.id } } },
+        },
+      });
+      if (created.ok) {
+        setId = created.body?.data?.id;
+        console.log(`  created set with ${type}`);
+        break;
+      }
+    }
   }
-  if (!setId) continue;
+  if (!setId) {
+    console.log('  no display type accepted, skipping');
+    continue;
+  }
   console.log(`  set ${setId}`);
 
+  // Remove half-uploaded leftovers from earlier runs.
   const existing = await api('GET', `/appScreenshotSets/${setId}/appScreenshots?limit=50`);
-  if ((existing.body?.data ?? []).length > 0) {
-    console.log('  screenshots already present, skipping upload');
+  let uploaded = 0;
+  for (const row of existing.body?.data ?? []) {
+    if (row.attributes?.uploaded === true) {
+      uploaded += 1;
+    } else {
+      await api('DELETE', `/appScreenshots/${row.id}`);
+    }
+  }
+  if (uploaded > 0) {
+    console.log(`  ${uploaded} screenshot(s) already uploaded, skipping`);
     continue;
   }
 
@@ -100,9 +118,12 @@ for (const file of files) {
   if (!screenshot) continue;
 
   for (const operation of screenshot.attributes?.uploadOperations ?? []) {
+    const headers = Object.fromEntries(
+      (operation.requestHeaders ?? []).map((header) => [header.name, header.value]),
+    );
     const response = await fetch(operation.url, {
       method: operation.method ?? 'PUT',
-      headers: operation.requestHeaders ?? {},
+      headers,
       body: data.subarray(operation.offset ?? 0, (operation.offset ?? 0) + (operation.length ?? data.length)),
     });
     console.log(`  upload chunk ${operation.length ?? data.length} -> HTTP ${response.status}`);
