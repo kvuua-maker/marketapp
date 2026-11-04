@@ -28,7 +28,7 @@ concurrency:
 jobs:
   archive-and-upload:
     name: Archive and upload to TestFlight
-    runs-on: macos-15
+    runs-on: macos-14
     timeout-minutes: 60
     env:
       API: https://api.appstoreconnect.apple.com/v1
