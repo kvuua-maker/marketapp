@@ -288,7 +288,7 @@ export function createAppServer({ db, adapters, ai, config, logger, syncTrigger 
 
     // Static legal pages (App Store support URL fallback). Handled without
     // throwing: this block runs before the global try/catch below.
-    const LEGAL_PAGES = new Set(['support.html']);
+    const LEGAL_PAGES = new Set(['support.html', 'marketapp_privacy.html', 'marketapp_terms.html']);
     if (req.method === 'GET' && path.startsWith('/legal/')) {
       const file = path.slice('/legal/'.length);
       try {

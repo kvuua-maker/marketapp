@@ -351,6 +351,12 @@ test('serves the support page', async () => {
     assert.match(html, /Підтримка MarketApp/);
     assert.match(html, /kvuua@yahoo\.com/);
 
+    for (const page of ['marketapp_privacy.html', 'marketapp_terms.html']) {
+      const legal = await fetch(`${base}/legal/${page}`);
+      assert.equal(legal.status, 200, page);
+      assert.match(await legal.text(), /MarketApp/);
+    }
+
     const missing = await fetch(`${base}/legal/nope.html`);
     assert.equal(missing.status, 404);
   } finally {
