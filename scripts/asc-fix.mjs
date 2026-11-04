@@ -74,7 +74,6 @@ await api('PATCH', `/appStoreVersionLocalizations/${versionLoc.id}`, {
     attributes: {
       supportUrl: `${SITE}/support.html`,
       marketingUrl: null,
-      privacyPolicyUrl: `${SITE}/marketapp_privacy.html`,
     },
   },
 });
@@ -91,7 +90,7 @@ await api('PATCH', `/appInfoLocalizations/${infoLoc.id}`, {
 
 // 5. App Review Information
 console.log('review details:');
-const existing = await api('GET', `/appStoreVersions/${version.id}/appStoreReviewDetails?limit=5`);
+const existing = await api('GET', `/appStoreReviewDetails?filter%5BappStoreVersion%5D=${version.id}&limit=5`);
 const attributes = {
   contactFirstName: 'Vladyslav',
   contactLastName: 'Khomenko',
