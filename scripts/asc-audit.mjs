@@ -131,10 +131,20 @@ if (version) {
   if (localeId) {
     const screenshots = await api(`/appStoreVersionLocalizations/${localeId}/appScreenshotSets?limit=20`);
     show('appScreenshotSets', screenshots);
-    out.screenshotSets = (screenshots.body?.data ?? []).map((row) => ({
-      id: row.id,
-      type: row.attributes?.screenshotDisplayType,
-    }));
+    out.screenshotSets = [];
+    for (const row of screenshots.body?.data ?? []) {
+      const shots = await api(`/appScreenshotSets/${row.id}/appScreenshots?limit=10`);
+      out.screenshotSets.push({
+        id: row.id,
+        type: row.attributes?.screenshotDisplayType,
+        screenshots: (shots.body?.data ?? []).map((shot) => ({
+          fileName: shot.attributes?.fileName,
+          uploaded: shot.attributes?.uploaded,
+          state: shot.attributes?.assetDeliveryState?.state,
+          errors: shot.attributes?.assetDeliveryState?.errors ?? null,
+        })),
+      });
+    }
   }
 }
 
