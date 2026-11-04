@@ -1,0 +1,37 @@
+name: ASC Tools
+
+# Metadata / audit helpers for App Store Connect.
+# Runs only on demand so it never consumes a TestFlight build number.
+
+on:
+  workflow_dispatch:
+    inputs:
+      task:
+        description: 'audit | metadata | screenshots'
+        required: true
+        default: audit
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID || secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID || secrets.ASC_ISSUER_ID }}
+      ASC_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_KEY || secrets.ASC_PRIVATE_KEY }}
+      APP_BUNDLE_ID: ${{ secrets.APP_BUNDLE_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check secrets
+        run: |
+          set -euo pipefail
+          [ -n "${ASC_KEY_ID:-}" ] || { echo "::error::ASC_KEY_ID missing"; exit 1; }
+          [ -n "${ASC_ISSUER_ID:-}" ] || { echo "::error::ASC_ISSUER_ID missing"; exit 1; }
+          [ -n "${ASC_PRIVATE_KEY:-}" ] || { echo "::error::ASC_PRIVATE_KEY missing"; exit 1; }
+          echo "key ${#ASC_KEY_ID} chars, issuer ${#ASC_ISSUER_ID} chars, bundle ${APP_BUNDLE_ID:-unset}"
+      - name: Audit
+        if: inputs.task == 'audit'
+        run: node scripts/asc-audit.mjs
