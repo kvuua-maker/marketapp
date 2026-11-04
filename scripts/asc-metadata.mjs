@@ -190,28 +190,7 @@ if (shopping) {
   console.log('category: Shopping not found in appCategories response');
 }
 
-// --------------------------------------------------------------------- EULA
-console.log('EULA:');
-const eula = await api('GET', `/apps/${app.id}/endUserLicenseAgreement`);
-if (eula.body?.data?.id) {
-  await patch(`/endUserLicenseAgreements/${eula.body.data.id}`, 'endUserLicenseAgreements', eula.body.data.id, {
-    agreementText: 'Див. Умови використання: ' + `${LEGAL}/marketapp_terms.html`,
-  });
-} else {
-  const territories = await api('GET', '/territories?limit=200');
-  const territoryData = (territories.body?.data ?? []).map((row) => ({ type: 'territories', id: row.id }));
-  console.log(`  territories: ${territoryData.length}`);
-  await api('POST', '/endUserLicenseAgreements', {
-    data: {
-      type: 'endUserLicenseAgreements',
-      attributes: { agreementText: 'Див. Умови використання: ' + `${LEGAL}/marketapp_terms.html` },
-      relationships: {
-        app: { data: { type: 'apps', id: app.id } },
-        territories: { data: territoryData },
-      },
-    },
-  });
-}
+// EULA intentionally left to Apple's standard license (no custom EULA).
 
 // ------------------------------------------------------------ attach a build
 console.log('builds:');
