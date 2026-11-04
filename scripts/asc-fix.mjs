@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * One-shot App Store Connect fixes for MarketApp:
- * content rights, copyright, MarketApp URLs (not Vakansio), review details.
+ * content rights, copyright, MarketApp URLs (the app-owned site), review details.
  */
 import { createSign } from 'node:crypto';
 

@@ -250,9 +250,9 @@ struct ProfileView: View {
         }
     }
 
-    static let supportURL = URL(string: "https://kvuua-maker.github.io/Vakansio/legal/support.html")!
-    static let privacyURL = URL(string: "https://kvuua-maker.github.io/Vakansio/legal/marketapp_privacy.html")!
-    static let termsURL = URL(string: "https://kvuua-maker.github.io/Vakansio/legal/marketapp_terms.html")!
+    static let supportURL = URL(string: "https://kvuua-maker.github.io/marketapp/support.html")!
+    static let privacyURL = URL(string: "https://kvuua-maker.github.io/marketapp/marketapp_privacy.html")!
+    static let termsURL = URL(string: "https://kvuua-maker.github.io/marketapp/marketapp_terms.html")!
 
     // MARK: - Rows
 

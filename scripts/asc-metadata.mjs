@@ -10,7 +10,7 @@ import { createSign } from 'node:crypto';
 const API = 'https://api.appstoreconnect.apple.com/v1';
 const BUNDLE = process.env.APP_BUNDLE_ID ?? 'com.kvuua.marketapp';
 
-const LEGAL = 'https://kvuua-maker.github.io/Vakansio/legal';
+const LEGAL = 'https://kvuua-maker.github.io/marketapp';
 
 const CONTENT = {
   name: 'MarketApp: електроніка',
