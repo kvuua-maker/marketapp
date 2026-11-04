@@ -140,32 +140,34 @@ const age = await api('GET', `/appInfos/${info.id}/ageRatingDeclaration`);
 const ageId = age.body?.data?.id;
 if (ageId) {
   console.log('age rating (4+):');
-  // The declaration mixes enum strings and booleans; probe each field once.
+  // Apple requires EVERY field in one request, and the schema mixes booleans
+  // with string enums. Send all booleans first; the error lists the enum fields.
   const fields = [
-    'advertising', 'alcoholTobaccoOrDrugUseOrReferences', 'contests', 'gamblingSimulated',
-    'gunsOrOtherWeapons', 'healthOrWellnessTopics', 'medicalOrTreatmentInformation',
+    'advertising', 'alcoholTobaccoOrDrugUseOrReferences', 'contests', 'gambling', 'gamblingSimulated',
+    'gunsOrOtherWeapons', 'healthOrWellnessTopics', 'lootBox', 'medicalOrTreatmentInformation',
     'messagingAndChat', 'parentalControls', 'profanityOrCrudeHumor', 'sexualContentGraphicAndNudity',
-    'sexualContentOrNudity', 'horrorOrFearThemes', 'matureOrSuggestiveThemes',
-    'violenceCartoonOrFantasy', 'violenceRealisticProlongedGraphicOrSadistic', 'violenceRealistic',
-    'gambling', 'lootBox', 'unrestrictedWebAccess', 'userGeneratedContent', 'socialMedia',
-    'socialMediaAgeRestricted', 'ageAssurance',
+    'sexualContentOrNudity', 'horrorOrFearThemes', 'matureOrSuggestiveThemes', 'unrestrictedWebAccess',
+    'userGeneratedContent', 'violenceCartoonOrFantasy', 'violenceRealisticProlongedGraphicOrSadistic',
+    'violenceRealistic', 'socialMedia', 'socialMediaAgeRestricted', 'ageAssurance',
   ];
-  const attributes = {};
-  for (const field of fields) {
-    const probe = await api('PATCH', `/ageRatingDeclarations/${ageId}`, {
-      data: { type: 'ageRatingDeclarations', id: ageId, attributes: { [field]: 'NONE' } },
-    });
-    if (probe.ok) {
-      attributes[field] = 'NONE';
-    } else if (/Expected a BOOLEAN/i.test(JSON.stringify(probe.body))) {
-      attributes[field] = false;
-    } else {
-      console.log(`  ? ${field}: ${JSON.stringify(probe.body).slice(0, 160)}`);
+  let attributes = Object.fromEntries(fields.map((field) => [field, false]));
+  attributes.userGeneratedContent = true; // the app has moderated customer reviews
+
+  let attempt = await patch(`/ageRatingDeclarations/${ageId}`, 'ageRatingDeclarations', ageId, attributes);
+  if (!attempt.ok) {
+    const enumFields = new Set(
+      (attempt.body?.errors ?? [])
+        .map((error) => error.source?.parameter ?? error.source?.pointer?.split('/').pop())
+        .filter(Boolean),
+    );
+    console.log(`  enum fields: ${[...enumFields].join(', ') || 'none'}`);
+    for (const field of enumFields) {
+      if (field in attributes) attributes[field] = 'NONE';
     }
+    attributes.userGeneratedContent = true;
+    attempt = await patch(`/ageRatingDeclarations/${ageId}`, 'ageRatingDeclarations', ageId, attributes);
+    if (!attempt.ok) console.log('  age rating still rejected:', JSON.stringify(attempt.body).slice(0, 600));
   }
-  // MarketApp has moderated customer reviews.
-  if ('userGeneratedContent' in attributes) attributes.userGeneratedContent = true;
-  await patch(`/ageRatingDeclarations/${ageId}`, 'ageRatingDeclarations', ageId, attributes);
 }
 
 // --------------------------------------------------------------- category
