@@ -163,7 +163,6 @@ if (ageId) {
     unrestrictedWebAccess: false,
     userGeneratedContent: true,
   });
-  });
 }
 
 // --------------------------------------------------------------- category
