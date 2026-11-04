@@ -7,13 +7,18 @@ struct CartView: View {
     var body: some View {
         Group {
             if cart.isEmpty {
-                EmptyStateView(
-                    title: "Кошик порожній",
-                    systemImage: "cart",
-                    message: "Додайте товари з каталогу — оплата при отриманні.",
-                    actionTitle: "Перейти до каталогу",
-                    action: { router.goToCatalog() }
-                )
+                ScrollView {
+                    EmptyStateView(
+                        title: "Кошик порожній",
+                        systemImage: "cart",
+                        message: "Додайте товари з каталогу — оплата при отриманні.",
+                        actionTitle: "Перейти до каталогу",
+                        action: { router.goToCatalog() }
+                    )
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 48)
+                }
+                .refreshable { await CartSync.refresh(cart) }
             } else {
                 content
             }
@@ -62,6 +67,7 @@ struct CartView: View {
                 Text("Оплата при отриманні у відділенні Нової Пошти. Онлайн-оплати немає.")
             }
         }
+        .refreshable { await CartSync.refresh(cart) }
         .safeAreaInset(edge: .bottom) {
             NavigationLink {
                 CheckoutView()

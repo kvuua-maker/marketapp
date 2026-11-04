@@ -233,6 +233,38 @@ test('signed-in order history is account based (works from any device)', async (
   }
 });
 
+test('placing an order empties the account cart for other devices', async () => {
+  const db = makeDb();
+  insertProduct(db, { id: 'aveopt:1', stock: 10 });
+  const token = makeUser(db);
+  const { server, base } = await startServer(db);
+
+  try {
+    const put = await fetch(`${base}/v1/cart`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify({ items: [{ productId: 'aveopt:1', qty: 2 }] }),
+    });
+    assert.equal(put.status, 200);
+
+    const created = await fetch(`${base}/v1/orders`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        customer: { fullName: 'Олена Шевченко', phone: '+380671112233', city: 'Київ', branch: 'Відділення №12' },
+        items: [{ productId: 'aveopt:1', qty: 2 }],
+      }),
+    });
+    assert.equal(created.status, 201);
+
+    const cart = await (await fetch(`${base}/v1/cart`, { headers: { authorization: `Bearer ${token}` } })).json();
+    assert.equal(cart.items.length, 0, 'the ordered items must leave the synced cart');
+    assert.ok(cart.updatedAt, 'an empty cart must carry a timestamp so clients treat it as authoritative');
+  } finally {
+    server.close();
+  }
+});
+
 test('apple sign-in rejects a malformed identity token', async () => {
   const db = makeDb();
   const { server, base } = await startServer(db);

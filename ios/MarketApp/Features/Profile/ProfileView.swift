@@ -62,7 +62,7 @@ struct ProfileView: View {
 
     @ViewBuilder
     private var ordersSection: some View {
-        if profile.isValidPhone {
+        if profile.isValidPhone || SessionStore.token != nil {
             Section("Мої замовлення") {
                 if isLoadingOrders {
                     HStack { ProgressView(); Text("Завантаження…").foregroundStyle(.secondary) }
@@ -280,7 +280,10 @@ struct ProfileView: View {
     }
 
     private func loadOrders() async {
-        guard profile.isValidPhone else {
+        // Guests see orders for their phone; signed-in users see the whole
+        // account, so the phone is not required.
+        let signedIn = SessionStore.token != nil
+        guard signedIn || profile.isValidPhone else {
             orders = []
             return
         }

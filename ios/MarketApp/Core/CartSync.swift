@@ -62,6 +62,19 @@ enum CartSync {
         guard let remote else { return }
         print("[CartSync] Fetched \(remote.items.count) items from server, local cart has \(cart.lines.count)")
 
+        // The server keeps updatedAt: an empty cart WITH a timestamp means the
+        // basket was cleared on purpose (order placed / items removed), so the
+        // stale local copy must not be pushed back.
+        if remote.items.isEmpty, remote.updatedAt != nil {
+            if cart.isEmpty {
+                print("[CartSync] server cart is empty (cleared) — local is empty too")
+            } else {
+                cart.replaceAll(with: [])
+                print("[CartSync] server cart was cleared elsewhere (order placed) — local cart emptied")
+            }
+            return
+        }
+
         // 3. Merge by product id.
         var orderedIds: [String] = []
         var seen = Set<String>()
@@ -100,6 +113,12 @@ enum CartSync {
 
         // 4. Push the merged basket back so every device converges.
         await pushNow(cart)
+    }
+
+    /// Pull-to-refresh entry point on the cart screen.
+    static func refresh(_ cart: CartStore) async {
+        print("[CartSync] manual refresh requested")
+        await mergeRemoteIntoLocal(cart)
     }
 
     // MARK: - Push

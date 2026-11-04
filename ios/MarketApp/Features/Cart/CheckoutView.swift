@@ -278,6 +278,8 @@ struct CheckoutView: View {
                 profile.addAddress(label: selectedCity, city: selectedCity, branch: selectedWarehouse)
                 result = response
                 cart.clear()
+                // Tell the account immediately so other devices drop the items.
+                await CartSync.pushNow(cart)
             } catch {
                 errorMessage = error.localizedDescription
                 if let apiError = error as? APIError, let field = apiError.field,

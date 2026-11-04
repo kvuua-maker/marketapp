@@ -851,6 +851,7 @@ export function createAppServer({ db, adapters, ai, config, logger, syncTrigger 
         rateLimit(`orders:${clientKey(req)}`, 10, 3_600_000);
         const payload = await readJsonBody(req);
         const token = clientTokenFrom(req);
+        const userId = userFromRequest(db, req);
         const result = await createOrder({
           db,
           adapters,
@@ -859,8 +860,20 @@ export function createAppServer({ db, adapters, ai, config, logger, syncTrigger 
           payload,
           novaPoshta,
           clientTokenHash: token ? tokenHash(token) : null,
-          userId: userFromRequest(db, req),
+          userId,
         });
+
+        // The order consumed the basket: wipe the synced cart so the same
+        // items disappear on every signed-in device immediately.
+        if (userId) {
+          run(
+            db,
+            `INSERT INTO user_carts (user_id, cart_json, updated_at) VALUES (?, '[]', ?)
+             ON CONFLICT(user_id) DO UPDATE SET cart_json = '[]', updated_at = excluded.updated_at`,
+            [userId, new Date().toISOString()],
+          );
+        }
+
         sendJson(res, 201, result, { 'cache-control': 'no-store' });
         return;
       }
