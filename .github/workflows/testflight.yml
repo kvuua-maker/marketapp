@@ -12,6 +12,10 @@ name: TestFlight
 on:
   push:
     branches: [main]
+    # Tooling, server and docs changes do not need a new iOS build.
+    paths:
+      - 'ios/**'
+      - '.github/workflows/testflight.yml'
   workflow_dispatch:
 
 permissions:
