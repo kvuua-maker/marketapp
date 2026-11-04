@@ -290,6 +290,11 @@ test('a customer can cancel an order that has not shipped', async () => {
     const body = await cancelled.json();
     assert.equal(body.status, 'cancelled');
 
+    const mails = db.prepare('SELECT subject, status FROM outbox WHERE order_id = ?').all(order.orderId);
+    const cancellation = mails.find((row) => /скасовано/.test(row.subject));
+    assert.ok(cancellation, 'a cancellation email must be queued for the supplier');
+    assert.equal(cancellation.status, 'queued');
+
     const again = await fetch(`${base}/v1/orders/${order.orderId}/cancel`, {
       method: 'POST',
       headers: { 'x-client-token': device },
@@ -331,6 +336,23 @@ test('an order that already shipped cannot be cancelled', async () => {
     assert.equal(response.status, 400);
     const body = await response.json();
     assert.match(body.error.message, /вже в дорозі/);
+  } finally {
+    server.close();
+  }
+});
+
+test('serves the support page', async () => {
+  const db = makeDb();
+  const { server, base } = await startServer(db);
+  try {
+    const response = await fetch(`${base}/legal/support.html`);
+    assert.equal(response.status, 200);
+    const html = await response.text();
+    assert.match(html, /Підтримка MarketApp/);
+    assert.match(html, /kvuua@yahoo\.com/);
+
+    const missing = await fetch(`${base}/legal/nope.html`);
+    assert.equal(missing.status, 404);
   } finally {
     server.close();
   }

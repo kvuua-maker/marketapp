@@ -242,11 +242,15 @@ struct ProfileView: View {
 
     private var legalSection: some View {
         Section("Документи") {
+            Link(destination: Self.supportURL) {
+                Label("Підтримка", systemImage: "questionmark.circle")
+            }
             Link("Політика конфіденційності", destination: Self.privacyURL)
             Link("Умови використання", destination: Self.termsURL)
         }
     }
 
+    static let supportURL = URL(string: "https://kvuua-maker.github.io/Vakansio/legal/support.html")!
     static let privacyURL = URL(string: "https://kvuua-maker.github.io/Vakansio/legal/privacy.html")!
     static let termsURL = URL(string: "https://kvuua-maker.github.io/Vakansio/legal/terms.html")!
 

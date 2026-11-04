@@ -32,6 +32,28 @@ export function composeSupplierEmail({ order, items, customer, supplierName }) {
   };
 }
 
+/** Supplier-facing cancellation notice (queued, never blocks the request). */
+export function composeCancellationEmail({ order, items, supplierName }) {
+  const lines = [
+    `Скасування замовлення MarketApp № ${order.id}`,
+    `Постачальник: ${supplierName}`,
+    '',
+    'Замовлення скасовано клієнтом. Прохання НЕ відправляти його Новою Поштою.',
+    '',
+    'СКАСОВАНІ ПОЗИЦІЇ:',
+    ...items.map(
+      (item, index) => `${index + 1}. ${item.title} — ${item.qty} шт.`,
+    ),
+    '',
+    `Дата скасування: ${new Date().toISOString()}`,
+  ];
+
+  return {
+    subject: `MarketApp: замовлення ${order.id} скасовано`,
+    text: lines.join('\n'),
+  };
+}
+
 export function enqueueOutbox(db, { orderId, supplierId, channel = 'email', to, subject, body }) {
   return run(
     db,

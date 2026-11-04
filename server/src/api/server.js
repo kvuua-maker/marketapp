@@ -1,4 +1,5 @@
 import { createServer } from 'node:http';
+import { readFileSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { all, get, run } from '../db/database.js';
 import {
@@ -10,7 +11,7 @@ import {
   toPublicError,
 } from '../core/errors.js';
 import { createOrder } from '../orders/router.js';
-import { getOrder } from '../orders/outbox.js';
+import { composeCancellationEmail, enqueueOutbox, getOrder } from '../orders/outbox.js';
 import { norm, normPhone } from '../domain/normalize.js';
 import { moderateReview } from '../services/reviewModerator.js';
 import { handleImageProxy } from '../services/imageProxy.js';
@@ -284,6 +285,25 @@ export function createAppServer({ db, adapters, ai, config, logger, syncTrigger 
     const startedAt = Date.now();
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
     const path = url.pathname.replace(/\/+$/, '') || '/';
+
+    // Static legal pages (App Store support URL fallback). Handled without
+    // throwing: this block runs before the global try/catch below.
+    const LEGAL_PAGES = new Set(['support.html']);
+    if (req.method === 'GET' && path.startsWith('/legal/')) {
+      const file = path.slice('/legal/'.length);
+      try {
+        if (!LEGAL_PAGES.has(file)) throw new Error('unknown page');
+        const body = readFileSync(new URL(`../../public/legal/${file}`, import.meta.url));
+        res.writeHead(200, {
+          'content-type': 'text/html; charset=utf-8',
+          'cache-control': 'public, max-age=3600',
+        });
+        res.end(body);
+      } catch {
+        sendJson(res, 404, { error: { code: 'not_found', message: 'Сторінку не знайдено' } });
+      }
+      return;
+    }
 
     if (req.method === 'OPTIONS') {
       res.writeHead(204, {
@@ -908,7 +928,40 @@ export function createAppServer({ db, adapters, ai, config, logger, syncTrigger 
         const cancelledAt = new Date().toISOString();
         run(db, "UPDATE orders SET status = 'cancelled', cancelled_at = ? WHERE id = ?", [cancelledAt, id]);
         run(db, "UPDATE order_items SET supplier_order_status = 'cancelled' WHERE order_id = ?", [id]);
-        logger.info('order cancelled', { orderId: id, previousStatus: status, by: userId ? 'account' : 'device' });
+
+        // Tell the supplier not to ship. The email is queued in the outbox:
+        // without EMAIL_PROVIDER=resend it simply waits there, no errors.
+        const bySupplier = new Map();
+        for (const item of data.items) {
+          if (!bySupplier.has(item.supplier_id)) bySupplier.set(item.supplier_id, []);
+          bySupplier.get(item.supplier_id).push({
+            title: item.title_snapshot,
+            qty: item.qty,
+          });
+        }
+        for (const [supplierId, items] of bySupplier) {
+          const supplierName = adapters.find((adapter) => adapter.id === supplierId)?.name ?? supplierId;
+          const email = composeCancellationEmail({
+            order: { id },
+            items,
+            supplierName,
+          });
+          enqueueOutbox(db, {
+            orderId: id,
+            supplierId,
+            channel: 'email',
+            to: config.orders.supplierEmail?.[supplierId] ?? `orders+${supplierId}@marketapp.local`,
+            subject: email.subject,
+            body: email.text,
+          });
+        }
+
+        logger.info('order cancelled', {
+          orderId: id,
+          previousStatus: status,
+          by: userId ? 'account' : 'device',
+          suppliers: bySupplier.size,
+        });
 
         sendJson(res, 200, { id, status: 'cancelled', cancelledAt }, { 'cache-control': 'no-store' });
         return;
