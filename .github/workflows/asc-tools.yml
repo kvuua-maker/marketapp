@@ -35,3 +35,6 @@ jobs:
       - name: Audit
         if: inputs.task == 'audit'
         run: node scripts/asc-audit.mjs
+      - name: Metadata
+        if: inputs.task == 'metadata'
+        run: node scripts/asc-metadata.mjs
