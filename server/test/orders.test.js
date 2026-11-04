@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { makeDb, insertProduct, testConfig, logger } from './helpers.js';
-import { createOrder, normalizePhone, validateCustomer } from '../src/orders/router.js';
+import { createOrder, normalizeBranch, normalizePhone, validateCustomer } from '../src/orders/router.js';
 import { get } from '../src/db/database.js';
 
 function fakeAdapter(id, behaviour = 'sent') {
@@ -24,6 +24,26 @@ test('normalizePhone accepts Ukrainian formats', () => {
   assert.equal(normalizePhone('380671234567'), '+380671234567');
   assert.equal(normalizePhone('0671234567'), '+380671234567');
   assert.equal(normalizePhone('12345'), null);
+});
+
+test('normalizeBranch turns a plain number into a Nova Poshta branch', () => {
+  assert.equal(normalizeBranch('17'), 'Відділення №17');
+  assert.equal(normalizeBranch('№17'), 'Відділення №17');
+  assert.equal(normalizeBranch('Відділення 17'), 'Відділення №17');
+  assert.equal(normalizeBranch('Відділення №17'), 'Відділення №17');
+  assert.equal(normalizeBranch('Київ, вул. Хрещатик 1'), 'Київ, вул. Хрещатик 1');
+  assert.equal(normalizeBranch(''), '');
+});
+
+test('validateCustomer accepts spaces in the phone and a numeric branch', () => {
+  const customer = validateCustomer({
+    fullName: 'Владислав Хоменко',
+    phone: '+380 97 469 00 00',
+    city: 'Київ',
+    branch: '17',
+  });
+  assert.equal(customer.phone, '+380974690000');
+  assert.equal(customer.branch, 'Відділення №17');
 });
 
 test('validateCustomer rejects incomplete data', () => {

@@ -17,6 +17,7 @@ struct CheckoutView: View {
     @State private var result: OrderResponse?
     @State private var showCityPicker = false
     @State private var showWarehousePicker = false
+    @State private var scrollRequest: String?
 
     var body: some View {
         Group {
@@ -214,6 +215,12 @@ struct CheckoutView: View {
                     proxy.scrollTo(target, anchor: .center)
                 }
             }
+            .onChange(of: scrollRequest) { _, target in
+                guard let target else { return }
+                withAnimation(.easeInOut(duration: 0.25)) {
+                    proxy.scrollTo(target, anchor: .center)
+                }
+            }
         }
     }
 
@@ -254,8 +261,9 @@ struct CheckoutView: View {
             return
         }
 
+        customer.phone = Self.digitsOnlyPhone(customer.phone)
         customer.city = selectedCity
-        customer.branch = selectedWarehouse
+        customer.branch = Self.normalizedBranch(selectedWarehouse)
         customer.comment = note
         isSubmitting = true
         errorMessage = nil
@@ -272,6 +280,11 @@ struct CheckoutView: View {
                 cart.clear()
             } catch {
                 errorMessage = error.localizedDescription
+                if let apiError = error as? APIError, let field = apiError.field,
+                   let target = Self.fieldId(for: field) {
+                    showValidation = true
+                    scrollRequest = target
+                }
             }
             isSubmitting = false
         }
@@ -319,6 +332,33 @@ struct CheckoutView: View {
     }
 
     // MARK: - Helpers
+
+    /// Maps server field names to the form ids used for scrolling.
+    static func fieldId(for serverField: String) -> String? {
+        switch serverField {
+        case "fullName": return "name"
+        case "phone": return "phone"
+        case "city": return "city"
+        case "branch": return "warehouse"
+        default: return nil
+        }
+    }
+
+    /// "+380 97 469 00 00" -> "+380974690000" (the server normalises again).
+    static func digitsOnlyPhone(_ input: String) -> String {
+        let digits = input.filter(\.isNumber)
+        return digits.isEmpty ? "" : "+\(digits)"
+    }
+
+    /// "17" -> "Відділення №17", mirrors the server rule.
+    static func normalizedBranch(_ input: String) -> String {
+        let raw = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        let digits = raw.filter(\.isNumber)
+        if !digits.isEmpty, raw.range(of: #"^(?:відділення\s*)?№?\s*\d{1,4}$"#, options: [.regularExpression, .caseInsensitive]) != nil {
+            return "Відділення №\(digits)"
+        }
+        return raw
+    }
 
     /// Formats any input into +380 XX XXX XX XX.
     static func formatPhone(_ input: String) -> String {
@@ -445,7 +485,7 @@ struct WarehousePickerView: View {
 
                     Section {
                         Button("Зберегти") {
-                            onSelect(manual.trimmingCharacters(in: .whitespacesAndNewlines))
+                            onSelect(CheckoutView.normalizedBranch(manual))
                             dismiss()
                         }
                         .disabled(manual.trimmingCharacters(in: .whitespacesAndNewlines).count < 2)

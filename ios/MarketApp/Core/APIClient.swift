@@ -2,6 +2,9 @@ import Foundation
 
 struct APIError: LocalizedError {
     let message: String
+    var field: String? = nil
+    var status: Int? = nil
+
     var errorDescription: String? { message }
 }
 
@@ -30,9 +33,14 @@ private extension URLRequest {
 }
 
 private struct ServerErrorEnvelope: Decodable {
+    struct Detail: Decodable {
+        let field: String?
+        let message: String?
+    }
     struct Payload: Decodable {
         let code: String
         let message: String
+        let details: [Detail]?
     }
     let error: Payload
 }
@@ -190,7 +198,7 @@ struct APIClient {
             phone: phone,
             addresses: addresses.map { AddressBody(label: $0.label, city: $0.city, branch: $0.branch) }
         )
-        return try await post("/v1/profile", body: payload)
+        return try await put("/v1/profile", body: payload)
     }
 
     func remoteCart() async throws -> RemoteCart {
@@ -205,7 +213,7 @@ struct APIClient {
         struct Body: Encodable {
             let items: [ItemBody]
         }
-        return try await post(
+        return try await put(
             "/v1/cart",
             body: Body(items: items.map { ItemBody(productId: $0.productId, qty: $0.qty) })
         )
@@ -273,6 +281,17 @@ struct APIClient {
         return try await send(request)
     }
 
+    private func put<T: Decodable, B: Encodable>(_ path: String, body: B) async throws -> T {
+        var request = URLRequest(url: baseURL.appendingPathComponent(path))
+        request.httpMethod = "PUT"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue(ClientIdentity.token, forHTTPHeaderField: "X-Client-Token")
+        request.applySessionToken()
+        request.httpBody = try JSONEncoder().encode(body)
+        return try await send(request)
+    }
+
     private func send<T: Decodable>(_ request: URLRequest) async throws -> T {
         do {
             let (data, response) = try await session.data(for: request)
@@ -280,7 +299,10 @@ struct APIClient {
                 throw APIError(message: "Невідома відповідь сервера")
             }
             guard (200..<300).contains(http.statusCode) else {
-                throw APIError(message: Self.errorMessage(from: data) ?? "Помилка сервера (\(http.statusCode))")
+                let parsed = Self.parseError(from: data)
+                let message = parsed?.message ?? "Помилка сервера (\(http.statusCode))"
+                print("[MarketApp] HTTP \(http.statusCode) \(request.httpMethod ?? "?") \(request.url?.path ?? ""): \(message)")
+                throw APIError(message: message, field: parsed?.field, status: http.statusCode)
             }
             return try decoder.decode(T.self, from: data)
         } catch let error as APIError {
@@ -294,8 +316,8 @@ struct APIClient {
         }
     }
 
-    private static func errorMessage(from data: Data) -> String? {
+    private static func parseError(from data: Data) -> (message: String, field: String?)? {
         guard let envelope = try? JSONDecoder().decode(ServerErrorEnvelope.self, from: data) else { return nil }
-        return envelope.error.message
+        return (envelope.error.message, envelope.error.details?.first?.field)
     }
 }

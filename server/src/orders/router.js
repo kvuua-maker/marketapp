@@ -36,6 +36,17 @@ async function revalidateLowStock({ products, adapterById, logger }) {
 const PHONE_UA = /^(?:\+?38)?0(\d{9})$/;
 const MAX_QTY_PER_ITEM = 10;
 
+/** "17" / "№17" / "Відділення 17" -> "Відділення №17". */
+export function normalizeBranch(input) {
+  const raw = String(input ?? '').trim().replace(/\s+/g, ' ');
+  if (!raw) return '';
+  const digits = raw.replace(/\D/g, '');
+  if (digits && /^(?:відділення\s*)?№?\s*\d{1,4}$/i.test(raw)) {
+    return `Відділення №${digits}`;
+  }
+  return raw;
+}
+
 export function normalizePhone(input) {
   const digits = String(input ?? '').replace(/\D/g, '');
   const match = digits.match(PHONE_UA);
@@ -48,17 +59,19 @@ export function validateCustomer(input) {
   const fullName = String(input?.fullName ?? '').trim();
   const phone = normalizePhone(input?.phone);
   const city = String(input?.city ?? '').trim();
-  const branch = String(input?.branch ?? '').trim();
+  const branch = normalizeBranch(input?.branch);
   const comment = String(input?.comment ?? '').trim().slice(0, 500);
 
   if (fullName.length < 5 || !fullName.includes(' ')) {
     errors.push({ field: 'fullName', message: 'Вкажіть прізвище та імʼя' });
   }
-  if (!phone) errors.push({ field: 'phone', message: 'Формат телефону: +380XXXXXXXXX' });
-  if (city.length < 2) errors.push({ field: 'city', message: 'Вкажіть місто' });
-  if (branch.length < 3) errors.push({ field: 'branch', message: 'Вкажіть відділення Нової Пошти' });
+  if (!phone) errors.push({ field: 'phone', message: 'Введіть правильний номер телефону' });
+  if (city.length < 2) errors.push({ field: 'city', message: 'Оберіть місто' });
+  if (branch.length < 2) errors.push({ field: 'branch', message: 'Оберіть відділення' });
 
-  if (errors.length > 0) throw new ValidationError('Некоректні дані отримувача', errors);
+  // The first problem becomes the top-level message so the app can show a
+  // concrete reason instead of a generic "invalid data".
+  if (errors.length > 0) throw new ValidationError(errors[0].message, errors);
 
   return { fullName, phone, city, branch, comment };
 }

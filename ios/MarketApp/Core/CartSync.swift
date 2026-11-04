@@ -7,18 +7,18 @@ import Foundation
 ///  * this device has items, server has none → push
 ///  * both have items → merge by product id (max qty, capped by stock, no duplicates)
 ///
-/// The merge runs on every launch (RootView), right after sign-in, and the
-/// local cart is pushed (debounced) after every change.
+/// Order is important: the Apple session is verified first (GET /v1/profile),
+/// and only then the cart is fetched, merged and pushed back.
 @MainActor
 enum CartSync {
     private static var pushTask: Task<Void, Never>?
     private static var mergeInFlight = false
 
-    // MARK: - Merge
+    // MARK: - Merge (pull → merge → push)
 
     static func mergeRemoteIntoLocal(_ cart: CartStore) async {
-        guard SessionStore.token != nil else {
-            print("[CartSync] skip: not signed in")
+        guard let token = SessionStore.token else {
+            print("[CartSync] no Apple session (guest mode) — sync skipped")
             return
         }
         guard !mergeInFlight else {
@@ -28,13 +28,41 @@ enum CartSync {
         mergeInFlight = true
         defer { mergeInFlight = false }
 
-        print("[CartSync] pull ← GET /v1/cart")
-        guard let remote = try? await APIClient.shared.remoteCart() else {
-            print("[CartSync] pull failed, keeping local cart (\(cart.lines.count) lines)")
+        // 1. Verify the stored session before touching the cart.
+        print("[CartSync] Auth token found (…\(token.suffix(6))), verifying with GET /v1/profile")
+        do {
+            let profile = try await APIClient.shared.remoteProfile()
+            print("[CartSync] Auth token verified, starting sync... (phone: \(profile.phone ?? "—"))")
+        } catch let error as APIError {
+            print("[CartSync] token verification failed (HTTP \(error.status ?? -1)): \(error.message)")
+            if error.status == 401 {
+                print("[CartSync] session expired — sign in again to resume cross-device sync")
+            }
+            return
+        } catch {
+            print("[CartSync] token verification error: \(error.localizedDescription)")
             return
         }
-        print("[CartSync] remote has \(remote.items.count) items, local has \(cart.lines.count)")
 
+        // 2. Pull the account cart (one retry for flaky mobile networks).
+        var remote: RemoteCart?
+        for attempt in 1...2 {
+            do {
+                remote = try await APIClient.shared.remoteCart()
+                break
+            } catch let error as APIError {
+                print("[CartSync] pull failed (attempt \(attempt), HTTP \(error.status ?? -1)): \(error.message)")
+                if error.status == 401 || attempt == 2 { return }
+            } catch {
+                print("[CartSync] pull failed (attempt \(attempt)): \(error.localizedDescription)")
+                if attempt == 2 { return }
+            }
+            try? await Task.sleep(nanoseconds: 800_000_000)
+        }
+        guard let remote else { return }
+        print("[CartSync] Fetched \(remote.items.count) items from server, local cart has \(cart.lines.count)")
+
+        // 3. Merge by product id.
         var orderedIds: [String] = []
         var seen = Set<String>()
         for item in cart.orderItems() where seen.insert(item.productId).inserted {
@@ -45,11 +73,10 @@ enum CartSync {
         }
 
         guard !orderedIds.isEmpty else {
-            print("[CartSync] both carts empty — nothing to do")
+            print("[CartSync] both carts are empty — nothing to merge")
             return
         }
 
-        let products = await fetchProducts(ids: orderedIds)
         var localQty: [String: Int] = [:]
         for item in cart.orderItems() {
             localQty[item.productId] = max(localQty[item.productId] ?? 0, item.qty)
@@ -59,6 +86,7 @@ enum CartSync {
             remoteQty[item.productId] = max(remoteQty[item.productId] ?? 0, item.qty)
         }
 
+        let products = await fetchProducts(ids: orderedIds)
         var merged: [(product: Product, qty: Int)] = []
         for id in orderedIds {
             guard let product = products[id], product.isAvailable else { continue }
@@ -70,6 +98,7 @@ enum CartSync {
         cart.replaceAll(with: merged)
         print("[CartSync] merged \(merged.count) items (max qty, capped by stock)")
 
+        // 4. Push the merged basket back so every device converges.
         await pushNow(cart)
     }
 
@@ -81,6 +110,8 @@ enum CartSync {
         do {
             let result = try await APIClient.shared.saveRemoteCart(items: items)
             print("[CartSync] push → PUT /v1/cart: \(items.count) items (saved: \(result.saved == true))")
+        } catch let error as APIError {
+            print("[CartSync] push failed (HTTP \(error.status ?? -1)): \(error.message)")
         } catch {
             print("[CartSync] push failed: \(error.localizedDescription)")
         }
