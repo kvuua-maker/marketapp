@@ -218,7 +218,8 @@ console.log('builds:');
 const builds = await api('GET', `/apps/${app.id}/builds?limit=20`);
 const buildList = (builds.body?.data ?? []).filter((row) => row.attributes?.processingState === 'VALID');
 buildList.sort((a, b) => Number(b.attributes.version) - Number(a.attributes.version));
-const build = buildList[0];
+const pinned = process.env.ASC_BUILD_NUMBER;
+const build = pinned ? buildList.find((row) => String(row.attributes.version) === String(pinned)) : buildList[0];
 if (build) {
   console.log(`newest VALID build ${build.attributes.version} (${build.id})`);
   await api('PATCH', `/appStoreVersions/${version.id}`, {

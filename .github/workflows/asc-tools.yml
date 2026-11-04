@@ -10,6 +10,10 @@ on:
         description: 'audit | metadata | screenshots'
         required: true
         default: audit
+      build:
+        description: 'Optional build number to attach (e.g. 28)'
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -23,6 +27,7 @@ jobs:
       ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID || secrets.ASC_ISSUER_ID }}
       ASC_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_KEY || secrets.ASC_PRIVATE_KEY }}
       APP_BUNDLE_ID: ${{ secrets.APP_BUNDLE_ID }}
+      ASC_BUILD_NUMBER: ${{ inputs.build }}
     steps:
       - uses: actions/checkout@v4
       - name: Check secrets
