@@ -38,3 +38,62 @@ jobs:
       - name: Metadata
         if: inputs.task == 'metadata'
         run: node scripts/asc-metadata.mjs
+
+  screenshots:
+    if: inputs.task == 'screenshots'
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID || secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID || secrets.ASC_ISSUER_ID }}
+      ASC_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_KEY || secrets.ASC_PRIVATE_KEY }}
+      APP_BUNDLE_ID: ${{ secrets.APP_BUNDLE_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate the project
+        working-directory: ios
+        run: xcodegen generate
+
+      - name: Build for the simulator
+        working-directory: ios
+        run: |
+          set -euo pipefail
+          xcodebuild -project MarketApp.xcodeproj -scheme MarketApp -configuration Debug \
+            -sdk iphonesimulator -derivedDataPath "$RUNNER_TEMP/dd" \
+            -destination 'generic/platform=iOS Simulator' build 2>&1 | tail -n 5
+          APP=$(find "$RUNNER_TEMP/dd/Build/Products/Debug-iphonesimulator" -maxdepth 1 -name '*.app' | head -1)
+          test -d "$APP"
+          echo "APP_PATH=$APP" >> "$GITHUB_ENV"
+          echo "built $APP"
+
+      - name: Capture screenshots
+        run: |
+          set -euo pipefail
+          pick() { xcrun simctl list devices available | grep -E "$1" | head -1 | sed -E 's/.*\(([0-9A-F-]{36})\).*/\1/'; }
+          shoot() {
+            local udid="$1" out="$2" name="$3"
+            echo "== $name ($udid)"
+            xcrun simctl boot "$udid" 2>/dev/null || true
+            xcrun simctl bootstatus "$udid" -b
+            xcrun simctl install "$udid" "$APP_PATH"
+            xcrun simctl launch "$udid" "$APP_BUNDLE_ID" || true
+            sleep 18
+            xcrun simctl io "$udid" screenshot "$out"
+            xcrun simctl shutdown "$udid" || true
+            file "$out"
+          }
+          IPHONE=$(pick 'iPhone 1[6-7].*Pro Max')
+          IPAD=$(pick 'iPad Pro 13-inch|iPad Pro 12.9-inch')
+          echo "iphone=$IPHONE ipad=$IPAD"
+          test -n "$IPHONE"
+          test -n "$IPAD"
+          shoot "$IPHONE" "$RUNNER_TEMP/iphone.png" "iPhone"
+          shoot "$IPAD" "$RUNNER_TEMP/ipad.png" "iPad"
+          ls -l "$RUNNER_TEMP"/*.png
+
+      - name: Upload to App Store Connect
+        run: node scripts/asc-screenshots.mjs "$RUNNER_TEMP/iphone.png" "$RUNNER_TEMP/ipad.png"

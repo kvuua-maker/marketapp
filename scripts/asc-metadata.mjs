@@ -140,29 +140,32 @@ const age = await api('GET', `/appInfos/${info.id}/ageRatingDeclaration`);
 const ageId = age.body?.data?.id;
 if (ageId) {
   console.log('age rating (4+):');
-  const NONE = 'NONE';
-  await patch(`/ageRatingDeclarations/${ageId}`, 'ageRatingDeclarations', ageId, {
-    advertising: NONE,
-    alcoholTobaccoOrDrugUseOrReferences: NONE,
-    contests: NONE,
-    gamblingSimulated: NONE,
-    gunsOrOtherWeapons: NONE,
-    healthOrWellnessTopics: NONE,
-    medicalOrTreatmentInformation: NONE,
-    messagingAndChat: NONE,
-    profanityOrCrudeHumor: NONE,
-    sexualContentGraphicAndNudity: NONE,
-    sexualContentOrNudity: NONE,
-    horrorOrFearThemes: NONE,
-    matureOrSuggestiveThemes: NONE,
-    violenceCartoonOrFantasy: NONE,
-    violenceRealisticProlongedGraphicOrSadistic: NONE,
-    violenceRealistic: NONE,
-    gambling: false,
-    lootBox: false,
-    unrestrictedWebAccess: false,
-    userGeneratedContent: true,
-  });
+  // The declaration mixes enum strings and booleans; probe each field once.
+  const fields = [
+    'advertising', 'alcoholTobaccoOrDrugUseOrReferences', 'contests', 'gamblingSimulated',
+    'gunsOrOtherWeapons', 'healthOrWellnessTopics', 'medicalOrTreatmentInformation',
+    'messagingAndChat', 'parentalControls', 'profanityOrCrudeHumor', 'sexualContentGraphicAndNudity',
+    'sexualContentOrNudity', 'horrorOrFearThemes', 'matureOrSuggestiveThemes',
+    'violenceCartoonOrFantasy', 'violenceRealisticProlongedGraphicOrSadistic', 'violenceRealistic',
+    'gambling', 'lootBox', 'unrestrictedWebAccess', 'userGeneratedContent', 'socialMedia',
+    'socialMediaAgeRestricted', 'ageAssurance',
+  ];
+  const attributes = {};
+  for (const field of fields) {
+    const probe = await api('PATCH', `/ageRatingDeclarations/${ageId}`, {
+      data: { type: 'ageRatingDeclarations', id: ageId, attributes: { [field]: 'NONE' } },
+    });
+    if (probe.ok) {
+      attributes[field] = 'NONE';
+    } else if (/Expected a BOOLEAN/i.test(JSON.stringify(probe.body))) {
+      attributes[field] = false;
+    } else {
+      console.log(`  ? ${field}: ${JSON.stringify(probe.body).slice(0, 160)}`);
+    }
+  }
+  // MarketApp has moderated customer reviews.
+  if ('userGeneratedContent' in attributes) attributes.userGeneratedContent = true;
+  await patch(`/ageRatingDeclarations/${ageId}`, 'ageRatingDeclarations', ageId, attributes);
 }
 
 // --------------------------------------------------------------- category
