@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       task:
-        description: 'audit | metadata | screenshots | eula-clear'
+        description: 'audit | metadata | screenshots | eula-clear | fix'
         required: true
         default: audit
       build:
@@ -46,6 +46,9 @@ jobs:
       - name: Clear custom EULA
         if: inputs.task == 'eula-clear'
         run: node scripts/asc-eula-clear.mjs
+      - name: Fix metadata
+        if: inputs.task == 'fix'
+        run: node scripts/asc-fix.mjs
 
   screenshots:
     if: inputs.task == 'screenshots'
