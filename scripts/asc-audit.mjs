@@ -129,9 +129,10 @@ if (version) {
   out.versionBuild = build.body?.data ? { id: build.body.data.id, version: build.body.data.attributes?.version } : null;
   out.versionAttributes = version.attributes;
 
-  const review = await api(`/appStoreVersions/${version.id}/appStoreReviewDetails?limit=5`);
-  show('appStoreReviewDetails', review);
-  out.reviewDetails = (review.body?.data ?? []).map((row) => ({ id: row.id, ...row.attributes }));
+  const review = await api(`/appStoreVersions/${version.id}/appStoreReviewDetail`);
+  show('appStoreReviewDetail', review);
+  const reviewData = Array.isArray(review.body?.data) ? review.body.data[0] : review.body?.data;
+  out.reviewDetails = reviewData ? [{ id: reviewData.id, ...reviewData.attributes }] : [];
 
   const sets = await api(`/appStoreVersions/${version.id}/appStoreVersionLocalizations?limit=20`);
   const localeId = sets.body?.data?.[0]?.id;

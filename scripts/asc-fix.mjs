@@ -99,7 +99,7 @@ const attributes = {
   demoAccountRequired: false,
   notes: 'No demo account required. The app uses guest checkout. Payment is cash on delivery via Nova Poshta.',
 };
-const current = existing.body?.data?.[0];
+const current = Array.isArray(existing.body?.data) ? existing.body.data[0] : existing.body?.data;
 if (current) {
   await api('PATCH', `/appStoreReviewDetails/${current.id}`, {
     data: { type: 'appStoreReviewDetails', id: current.id, attributes },
