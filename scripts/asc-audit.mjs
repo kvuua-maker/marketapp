@@ -74,11 +74,13 @@ if (!app) {
   process.exit(2);
 }
 out.app = { id: app.id, name: app.attributes.name, bundleId: app.attributes.bundleId, sku: app.attributes.sku };
+out.appAttributes = app.attributes;
 
 const infos = await api(`/apps/${app.id}/appInfos?limit=5`);
 show('appInfos', infos);
 const info = infos.body?.data?.[0];
 out.appInfo = info ? { id: info.id, state: info.attributes?.state } : null;
+out.appInfoAttributes = info?.attributes ?? null;
 
 if (info) {
   const localizations = await api(`/appInfos/${info.id}/appInfoLocalizations?limit=20`);
@@ -125,6 +127,11 @@ if (version) {
   const build = await api(`/appStoreVersions/${version.id}/build`);
   show('version.build', build);
   out.versionBuild = build.body?.data ? { id: build.body.data.id, version: build.body.data.attributes?.version } : null;
+  out.versionAttributes = version.attributes;
+
+  const review = await api(`/appStoreVersions/${version.id}/appStoreReviewDetails?limit=5`);
+  show('appStoreReviewDetails', review);
+  out.reviewDetails = (review.body?.data ?? []).map((row) => ({ id: row.id, ...row.attributes }));
 
   const sets = await api(`/appStoreVersions/${version.id}/appStoreVersionLocalizations?limit=20`);
   const localeId = sets.body?.data?.[0]?.id;
@@ -141,6 +148,8 @@ if (version) {
           fileName: shot.attributes?.fileName,
           uploaded: shot.attributes?.uploaded,
           state: shot.attributes?.assetDeliveryState?.state,
+          width: shot.attributes?.imageAsset?.width,
+          height: shot.attributes?.imageAsset?.height,
           errors: shot.attributes?.assetDeliveryState?.errors ?? null,
         })),
       });
