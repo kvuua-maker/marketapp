@@ -140,27 +140,29 @@ const age = await api('GET', `/appInfos/${info.id}/ageRatingDeclaration`);
 const ageId = age.body?.data?.id;
 if (ageId) {
   console.log('age rating (4+):');
+  const NONE = 'NONE';
   await patch(`/ageRatingDeclarations/${ageId}`, 'ageRatingDeclarations', ageId, {
-    advertising: false,
-    alcoholTobaccoOrDrugUseOrReferences: false,
-    contests: false,
+    advertising: NONE,
+    alcoholTobaccoOrDrugUseOrReferences: NONE,
+    contests: NONE,
+    gamblingSimulated: NONE,
+    gunsOrOtherWeapons: NONE,
+    healthOrWellnessTopics: NONE,
+    medicalOrTreatmentInformation: NONE,
+    messagingAndChat: NONE,
+    profanityOrCrudeHumor: NONE,
+    sexualContentGraphicAndNudity: NONE,
+    sexualContentOrNudity: NONE,
+    horrorOrFearThemes: NONE,
+    matureOrSuggestiveThemes: NONE,
+    violenceCartoonOrFantasy: NONE,
+    violenceRealisticProlongedGraphicOrSadistic: NONE,
+    violenceRealistic: NONE,
     gambling: false,
-    gamblingSimulated: false,
-    gunsOrOtherWeapons: false,
-    healthOrWellnessTopics: false,
     lootBox: false,
-    medicalOrTreatmentInformation: false,
-    messagingAndChat: false,
-    profanityOrCrudeHumor: false,
-    sexualContentGraphicAndNudity: false,
-    sexualContentOrNudity: false,
-    horrorOrFearThemes: false,
-    matureOrSuggestiveThemes: false,
     unrestrictedWebAccess: false,
-    userGeneratedContent: false,
-    violenceCartoonOrFantasy: false,
-    violenceRealisticProlongedGraphicOrSadistic: false,
-    violenceRealistic: false,
+    userGeneratedContent: true,
+  });
   });
 }
 
@@ -192,11 +194,17 @@ if (eula.body?.data?.id) {
     agreementText: 'Див. Умови використання: ' + `${LEGAL}/marketapp_terms.html`,
   });
 } else {
+  const territories = await api('GET', '/territories?limit=200');
+  const territoryData = (territories.body?.data ?? []).map((row) => ({ type: 'territories', id: row.id }));
+  console.log(`  territories: ${territoryData.length}`);
   await api('POST', '/endUserLicenseAgreements', {
     data: {
       type: 'endUserLicenseAgreements',
       attributes: { agreementText: 'Див. Умови використання: ' + `${LEGAL}/marketapp_terms.html` },
-      relationships: { app: { data: { type: 'apps', id: app.id } } },
+      relationships: {
+        app: { data: { type: 'apps', id: app.id } },
+        territories: { data: territoryData },
+      },
     },
   });
 }
