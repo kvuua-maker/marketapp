@@ -56,6 +56,16 @@ final class CartStore: ObservableObject {
         lines.removeAll { $0.id == id }
     }
 
+    /// Replaces the whole basket (used by cross-device sync). Quantities are
+    /// clamped to the real stock and unavailable products are dropped.
+    func replaceAll(with items: [(product: Product, qty: Int)]) {
+        lines = items.compactMap { item -> Line? in
+            guard item.product.isAvailable else { return nil }
+            let qty = min(max(1, item.qty), Self.maxQty(for: item.product))
+            return Line(product: item.product, qty: qty)
+        }
+    }
+
     func clear() {
         lines.removeAll()
     }

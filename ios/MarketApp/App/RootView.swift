@@ -32,6 +32,8 @@ enum SidebarItem: Hashable {
 }
 
 struct RootView: View {
+    @Environment(\.scenePhase) private var scenePhase
+
     @StateObject private var cart = CartStore()
     @StateObject private var catalog = CatalogViewModel()
     @StateObject private var favorites = FavoritesStore()
@@ -58,6 +60,24 @@ struct RootView: View {
         .preferredColorScheme(profile.theme.colorScheme)
         // Single source of truth: any sidebar change (buttons, chips, reset,
         // "go to catalog") drives the catalog exactly once.
+        // Cross-device cart: merge on every launch and when the app comes back
+        // to the foreground, push immediately when it goes to the background.
+        .task {
+            await CartSync.mergeRemoteIntoLocal(cart)
+        }
+        .onChange(of: cart.lines) { _, _ in
+            CartSync.schedulePush(cart)
+        }
+        .onChange(of: scenePhase) { _, phase in
+            switch phase {
+            case .active:
+                Task { await CartSync.mergeRemoteIntoLocal(cart) }
+            case .background:
+                Task { await CartSync.pushNow(cart) }
+            default:
+                break
+            }
+        }
         .onChange(of: router.sidebar) { _, newValue in
             switch newValue ?? .all {
             case .category(let name):

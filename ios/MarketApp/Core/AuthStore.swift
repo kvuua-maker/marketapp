@@ -128,7 +128,7 @@ final class AuthStore: ObservableObject {
     }
 
     private func sync(cart: CartStore, profile: ProfileStore) async {
-        // 1. Pull remote profile / cart when this device is empty (new iPad, etc.).
+        // Profile: pull remote values when this device has none, then push back.
         if let remote = try? await APIClient.shared.remoteProfile() {
             if profile.phone.isEmpty, let phone = remote.phone, !phone.isEmpty {
                 profile.phone = phone
@@ -140,25 +140,13 @@ final class AuthStore: ObservableObject {
             }
         }
 
-        if cart.isEmpty, let remoteCart = try? await APIClient.shared.remoteCart(), !remoteCart.items.isEmpty {
-            let ids = remoteCart.items.map(\.productId)
-            if let page = try? await APIClient.shared.products(ids: ids) {
-                for item in remoteCart.items {
-                    guard let product = page.items.first(where: { $0.id == item.productId }) else { continue }
-                    for _ in 0..<max(1, item.qty) {
-                        cart.add(product)
-                    }
-                }
-            }
-        }
-
-        // 2. Push the merged local state back to the account.
         let savedProfile: RemoteSaveResult? = try? await APIClient.shared.saveRemoteProfile(
             phone: profile.phone,
             addresses: profile.addresses
         )
-        let savedCart: RemoteSaveResult? = try? await APIClient.shared.saveRemoteCart(items: cart.orderItems())
         _ = savedProfile
-        _ = savedCart
+
+        // Cart: bidirectional merge (pull → merge → push).
+        await CartSync.mergeRemoteIntoLocal(cart)
     }
 }
