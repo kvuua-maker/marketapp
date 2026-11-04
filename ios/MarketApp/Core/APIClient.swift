@@ -236,6 +236,10 @@ struct APIClient {
         try await get("/v1/orders", query: [URLQueryItem(name: "phone", value: phone)])
     }
 
+    func cancelOrder(id: String) async throws -> CancelOrderResult {
+        try await post("/v1/orders/\(encoded(id))/cancel", body: [String: String]())
+    }
+
     func createOrder(_ request: OrderRequest) async throws -> OrderResponse {
         try await post("/v1/orders", body: request)
     }

@@ -29,6 +29,7 @@ export function migrate(db, logger) {
   if (addColumn('orders', 'ttn_status', 'TEXT')) added += 1;
   if (addColumn('orders', 'client_token_hash', 'TEXT')) added += 1;
   if (addColumn('orders', 'user_id', 'TEXT')) added += 1;
+  if (addColumn('orders', 'cancelled_at', 'TEXT')) added += 1;
   if (addColumn('reviews', 'hidden', 'INTEGER NOT NULL DEFAULT 0')) added += 1;
 
   db.exec('CREATE INDEX IF NOT EXISTS idx_products_title_norm ON products(title_norm)');

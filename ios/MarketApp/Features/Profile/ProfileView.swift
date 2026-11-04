@@ -14,6 +14,7 @@ struct ProfileView: View {
     @State private var notice: String?
     @State private var showAddressSheet = false
     @State private var ordersTask: Task<Void, Never>?
+    @State private var cancelTarget: OrderSummary?
 
     var body: some View {
         Form {
@@ -37,6 +38,21 @@ struct ProfileView: View {
             }
         }
         .refreshable { await refresh() }
+        .alert(
+            "Скасувати замовлення?",
+            isPresented: Binding(
+                get: { cancelTarget != nil },
+                set: { if !$0 { cancelTarget = nil } }
+            ),
+            presenting: cancelTarget
+        ) { order in
+            Button("Так, скасувати", role: .destructive) {
+                Task { await cancel(order) }
+            }
+            Button("Ні", role: .cancel) { cancelTarget = nil }
+        } message: { order in
+            Text("Ви впевнені, що хочете скасувати замовлення \(order.id)? Кошти не списуються, оплата при отриманні.")
+        }
         .sheet(isPresented: $showAddressSheet) {
             AddressEditor { label, city, branch in
                 profile.addAddress(label: label, city: city, branch: branch)
@@ -245,9 +261,9 @@ struct ProfileView: View {
                 Text(Money.uah(cents: order.totalCents)).font(.caption.weight(.bold))
             }
 
-            Text("\(formattedDate(order.createdAt)) · \(statusText(order.status))")
+            Text("\(formattedDate(order.createdAt)) · \(order.statusTitle)")
                 .font(.caption2)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(order.status == "cancelled" ? .red : .secondary)
 
             ForEach(order.items) { item in
                 Text("\(item.qty) × \(item.title)")
@@ -260,14 +276,28 @@ struct ProfileView: View {
                     .font(.caption2)
             }
 
-            Button {
-                reorder(order)
-            } label: {
-                Label("Повторити замовлення", systemImage: "arrow.clockwise")
-                    .font(.caption.weight(.semibold))
+            HStack(spacing: 8) {
+                Button {
+                    reorder(order)
+                } label: {
+                    Label("Повторити замовлення", systemImage: "arrow.clockwise")
+                        .font(.caption.weight(.semibold))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+
+                if order.canCancel {
+                    Button(role: .destructive) {
+                        cancelTarget = order
+                    } label: {
+                        Label("Скасувати замовлення", systemImage: "xmark.circle")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .tint(.red)
+                }
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
         }
         .padding(.vertical, 4)
     }
@@ -326,11 +356,17 @@ struct ProfileView: View {
         }
     }
 
-    private func statusText(_ status: String) -> String {
-        switch status {
-        case "routed": return "передано постачальнику"
-        case "routed_email": return "лист постачальнику"
-        default: return status
+    private func cancel(_ order: OrderSummary) async {
+        cancelTarget = nil
+        notice = nil
+        errorMessage = nil
+        do {
+            _ = try await APIClient.shared.cancelOrder(id: order.id)
+            notice = "Замовлення \(order.id) скасовано."
+            await loadOrders()
+        } catch {
+            errorMessage = error.localizedDescription
+            await loadOrders()
         }
     }
 

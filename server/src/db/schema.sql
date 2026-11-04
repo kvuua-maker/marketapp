@@ -77,7 +77,8 @@ CREATE TABLE IF NOT EXISTS orders (
   ttn_status      TEXT,
   total_cents     INTEGER NOT NULL,
   currency        TEXT NOT NULL DEFAULT 'UAH',
-  status          TEXT NOT NULL,           -- routed | partially_routed | failed
+  status          TEXT NOT NULL,           -- routing | routed | routed_email | cancelled
+  cancelled_at    TEXT,
   created_at      TEXT NOT NULL
 );
 

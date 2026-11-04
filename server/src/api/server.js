@@ -878,6 +878,42 @@ export function createAppServer({ db, adapters, ai, config, logger, syncTrigger 
         return;
       }
 
+      // Statuses that still can be cancelled: the parcel has not been shipped.
+      const cancelMatch = path.match(/^\/v1\/orders\/([^/]+)\/cancel$/);
+      if (cancelMatch && (req.method === 'POST' || req.method === 'PUT')) {
+        const id = decodeURIComponent(cancelMatch[1]);
+        const data = getOrder(db, id);
+        if (!data) throw new NotFoundError('Замовлення не знайдено');
+
+        const userId = userFromRequest(db, req);
+        const token = clientTokenFrom(req);
+        const ownsByUser = data.order.user_id && userId === data.order.user_id;
+        const ownsByDevice =
+          data.order.client_token_hash && token && tokenHash(token) === data.order.client_token_hash;
+        if (!ownsByUser && !ownsByDevice) throw new NotFoundError('Замовлення не знайдено');
+
+        const status = String(data.order.status);
+        if (status === 'cancelled') {
+          throw new AppError('Замовлення вже скасовано', { code: 'already_cancelled', status: 400 });
+        }
+
+        const cancelable = new Set(['new', 'processing', 'routing', 'routed', 'routed_email']);
+        if (!cancelable.has(status)) {
+          throw new AppError('Товар вже в дорозі, скасування неможливе', {
+            code: 'cannot_cancel',
+            status: 400,
+          });
+        }
+
+        const cancelledAt = new Date().toISOString();
+        run(db, "UPDATE orders SET status = 'cancelled', cancelled_at = ? WHERE id = ?", [cancelledAt, id]);
+        run(db, "UPDATE order_items SET supplier_order_status = 'cancelled' WHERE order_id = ?", [id]);
+        logger.info('order cancelled', { orderId: id, previousStatus: status, by: userId ? 'account' : 'device' });
+
+        sendJson(res, 200, { id, status: 'cancelled', cancelledAt }, { 'cache-control': 'no-store' });
+        return;
+      }
+
       const orderMatch = path.match(/^\/v1\/orders\/(.+)$/);
       if (req.method === 'GET' && orderMatch) {
         const id = decodeURIComponent(orderMatch[1]);

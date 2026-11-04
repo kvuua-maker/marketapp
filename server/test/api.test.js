@@ -265,6 +265,77 @@ test('placing an order empties the account cart for other devices', async () => 
   }
 });
 
+test('a customer can cancel an order that has not shipped', async () => {
+  const db = makeDb();
+  insertProduct(db, { id: 'aveopt:1', stock: 10 });
+  const { server, base } = await startServer(db);
+  const device = 'device-cancel-000001';
+
+  try {
+    const created = await fetch(`${base}/v1/orders`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-client-token': device },
+      body: JSON.stringify({
+        customer: { fullName: 'Олена Шевченко', phone: '+380671112233', city: 'Київ', branch: 'Відділення №12' },
+        items: [{ productId: 'aveopt:1', qty: 1 }],
+      }),
+    });
+    const order = await created.json();
+
+    const cancelled = await fetch(`${base}/v1/orders/${order.orderId}/cancel`, {
+      method: 'POST',
+      headers: { 'x-client-token': device },
+    });
+    assert.equal(cancelled.status, 200);
+    const body = await cancelled.json();
+    assert.equal(body.status, 'cancelled');
+
+    const again = await fetch(`${base}/v1/orders/${order.orderId}/cancel`, {
+      method: 'POST',
+      headers: { 'x-client-token': device },
+    });
+    assert.equal(again.status, 400);
+
+    const foreign = await fetch(`${base}/v1/orders/${order.orderId}/cancel`, {
+      method: 'POST',
+      headers: { 'x-client-token': 'device-other-000002' },
+    });
+    assert.equal(foreign.status, 404);
+  } finally {
+    server.close();
+  }
+});
+
+test('an order that already shipped cannot be cancelled', async () => {
+  const db = makeDb();
+  insertProduct(db, { id: 'aveopt:1', stock: 10 });
+  const { server, base } = await startServer(db);
+  const device = 'device-shipped-000001';
+
+  try {
+    const created = await fetch(`${base}/v1/orders`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-client-token': device },
+      body: JSON.stringify({
+        customer: { fullName: 'Олена Шевченко', phone: '+380671112233', city: 'Київ', branch: 'Відділення №12' },
+        items: [{ productId: 'aveopt:1', qty: 1 }],
+      }),
+    });
+    const order = await created.json();
+    run(db, "UPDATE orders SET status = 'shipped' WHERE id = ?", [order.orderId]);
+
+    const response = await fetch(`${base}/v1/orders/${order.orderId}/cancel`, {
+      method: 'POST',
+      headers: { 'x-client-token': device },
+    });
+    assert.equal(response.status, 400);
+    const body = await response.json();
+    assert.match(body.error.message, /вже в дорозі/);
+  } finally {
+    server.close();
+  }
+});
+
 test('apple sign-in rejects a malformed identity token', async () => {
   const db = makeDb();
   const { server, base } = await startServer(db);

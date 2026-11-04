@@ -153,6 +153,31 @@ struct OrderSummary: Identifiable, Codable, Hashable {
     let items: [OrderHistoryItem]
 }
 
+extension OrderSummary {
+    /// The parcel has not been shipped yet, so the customer may still cancel.
+    var canCancel: Bool {
+        ["new", "processing", "routing", "routed", "routed_email"].contains(status)
+    }
+
+    var statusTitle: String {
+        switch status {
+        case "new", "routing": return "Нове"
+        case "processing", "routed", "routed_email": return "В обробці"
+        case "shipped": return "Відправлено"
+        case "delivered": return "Доставлено"
+        case "cancelled": return "Скасовано"
+        case "failed": return "Помилка оформлення"
+        default: return status
+        }
+    }
+}
+
+struct CancelOrderResult: Codable {
+    let id: String
+    let status: String
+    let cancelledAt: String?
+}
+
 struct OrderHistoryPage: Codable {
     let items: [OrderSummary]
 }
