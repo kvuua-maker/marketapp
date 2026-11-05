@@ -28,7 +28,7 @@ concurrency:
 jobs:
   archive-and-upload:
     name: Archive and upload to TestFlight
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 60
     env:
       API: https://api.appstoreconnect.apple.com/v1
@@ -381,16 +381,50 @@ jobs:
           APP="$RUNNER_TEMP/MarketApp.xcarchive/Products/Applications/MarketApp.app"
           cp "$RUNNER_TEMP/app.mobileprovision" "$APP/embedded.mobileprovision"
           security cms -D -i "$RUNNER_TEMP/app.mobileprovision" > "$RUNNER_TEMP/profile.plist"
-          if /usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.developer.applesignin' "$RUNNER_TEMP/profile.plist" >/dev/null 2>&1; then
-            echo "profile entitlement: Sign in with Apple PRESENT"
-          else
-            echo "::warning::profile entitlement: Sign in with Apple MISSING — enable the capability in the developer portal"
-          fi
+          PROFILE_TITLE=$(/usr/libexec/PlistBuddy -c 'Print :Name' "$RUNNER_TEMP/profile.plist" 2>/dev/null || echo "?")
+          echo "provisioning profile: $PROFILE_TITLE"
           /usr/libexec/PlistBuddy -x -c 'Print :Entitlements' "$RUNNER_TEMP/profile.plist" > "$RUNNER_TEMP/entitlements.plist"
-          codesign --force --sign "Apple Distribution" --timestamp=none \
-            --entitlements "$RUNNER_TEMP/entitlements.plist" --generate-entitlement-der "$APP"
-          codesign --verify --verbose "$APP"
-          if codesign -d --entitlements :- "$APP" 2>/dev/null | grep -q "applesignin"; then
+
+          # A single stray xattr or AppleDouble file invalidates the seal (ITMS-90035).
+          xattr -cr "$APP" || true
+          dot_clean -m "$APP" || true
+          find "$APP" -name '._*' -delete || true
+
+          echo "--- bundle layout ---"
+          find "$APP" -maxdepth 2 -type d | sed "s#$APP#.#" | head -20
+
+          # Nested code must be signed before the app itself.
+          if [ -d "$APP/Frameworks" ]; then
+            find "$APP/Frameworks" -depth -name '*.framework' -print0 | while IFS= read -r -d '' fw; do
+              echo "sign framework: $fw"
+              codesign --force --sign "Apple Distribution" --timestamp --generate-entitlement-der "$fw"
+            done
+            find "$APP/Frameworks" -type f \( -name '*.dylib' -o -name '*.so' \) -print0 | while IFS= read -r -d '' lib; do
+              echo "sign library: $lib"
+              codesign --force --sign "Apple Distribution" --timestamp "$lib"
+            done
+          fi
+          if [ -d "$APP/PlugIns" ]; then
+            find "$APP/PlugIns" -depth -name '*.appex' -print0 | while IFS= read -r -d '' ext; do
+              echo "sign extension: $ext"
+              codesign --force --sign "Apple Distribution" --timestamp --generate-entitlement-der \
+                --entitlements "$RUNNER_TEMP/entitlements.plist" "$ext"
+            done
+          fi
+
+          # Secure Apple timestamp is mandatory for App Store builds.
+          codesign --force --sign "Apple Distribution" --timestamp --generate-entitlement-der \
+            --entitlements "$RUNNER_TEMP/entitlements.plist" "$APP"
+
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign -dvvv "$APP" 2>&1 | tee "$RUNNER_TEMP/sign.txt"
+          grep -q "Authority=Apple Distribution" "$RUNNER_TEMP/sign.txt" \
+            || { echo "::error::the app is not signed with an Apple Distribution certificate"; exit 1; }
+          grep -q "Timestamp=" "$RUNNER_TEMP/sign.txt" \
+            || { echo "::error::the signature has no secure timestamp"; exit 1; }
+
+          codesign -d --entitlements :- "$APP" 2>/dev/null | tee "$RUNNER_TEMP/ent.plist"
+          if grep -q "applesignin" "$RUNNER_TEMP/ent.plist"; then
             echo "signed app: Sign in with Apple entitlement PRESENT"
           else
             echo "::warning::signed app: Sign in with Apple entitlement MISSING"
@@ -400,8 +434,14 @@ jobs:
           cp -R "$APP" "$RUNNER_TEMP/export/Payload/"
           IPA="$RUNNER_TEMP/export/MarketApp.ipa"
           ( cd "$RUNNER_TEMP/export" && ditto -c -k --sequesterRsrc --keepParent Payload "$IPA" )
-          unzip -l "$IPA" | head -5
+          unzip -l "$IPA" | head -12
           ls -l "$IPA"
+
+          # Re-check the signature exactly as App Store Connect will see it.
+          rm -rf "$RUNNER_TEMP/verify" && mkdir -p "$RUNNER_TEMP/verify"
+          unzip -q "$IPA" -d "$RUNNER_TEMP/verify"
+          codesign --verify --deep --strict --verbose=2 "$RUNNER_TEMP/verify/Payload/MarketApp.app"
+          echo "IPA signature verified"
 
       - name: Upload to TestFlight
         run: |
