@@ -193,3 +193,46 @@ test('Dropt canary blocks a feed that already carries a supplier markup', async 
   for await (const product of clean.fetchProducts()) products.push(product);
   assert.equal(products.length, 1);
 });
+
+test('LUGI XML adapter prefixes ids and reads the wholesale price', async () => {
+  const { LugiXmlAdapter } = await import('../src/suppliers/lugiXml.js');
+  const { mkdtempSync, writeFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+
+  const feed = `<?xml version="1.0" encoding="UTF-8"?>
+<yml_catalog date="2026-11-07 13:35"><shop>
+  <name>Lugi feed</name>
+  <categories><category id="145">Смарт-годинники</category></categories>
+  <offers>
+    <offer id="1875370747" available="true">
+      <price>1889</price>
+      <currencyId>UAH</currencyId>
+      <categoryId>145</categoryId>
+      <picture>https://feed.lugi.com.ua/image/catalog/a.jpg</picture>
+      <name>Смарт годинник SWS8UO</name>
+      <vendor>Smartx</vendor>
+      <description><![CDATA[Смарт-годинник з вимірюванням тиску та великим екраном 2.2 дюйма.]]></description>
+      <quantity_in_stock>12</quantity_in_stock>
+    </offer>
+  </offers>
+</shop></yml_catalog>`;
+
+  const dir = mkdtempSync(join(tmpdir(), 'lugi-yml-'));
+  const path = join(dir, 'lugi.xml');
+  writeFileSync(path, feed, 'utf8');
+
+  const adapter = new LugiXmlAdapter({ config: { xmlPath: path, idPrefix: 'lugi_' }, logger });
+  assert.equal(adapter.id, 'lugi');
+  assert.equal(adapter.feedOrigin(), 'https://feed.lugi.com.ua');
+
+  const products = [];
+  for await (const product of adapter.fetchProducts()) products.push(product);
+  assert.equal(products.length, 1);
+  assert.equal(products[0].externalId, '1875370747');
+  assert.equal(products[0].idPrefix, 'lugi_');
+  assert.equal(`${products[0].idPrefix}${products[0].externalId}`, 'lugi_1875370747');
+  assert.equal(products[0].costCents, 188_900);
+  assert.equal(products[0].stock, 12);
+  assert.equal(products[0].categoryRaw, 'Смарт-годинники');
+});

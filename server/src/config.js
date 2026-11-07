@@ -94,6 +94,11 @@ export const config = {
       companyId: process.env.LUGI_COMPANY_ID ?? '',
       companySecret: process.env.LUGI_COMPANY_SECRET ?? '',
       marginPercent: float(process.env.LUGI_MARGIN_PERCENT, NaN),
+      // No API yet — the UniXML/Prom feed is the source of truth.
+      xmlUrl: process.env.LUGI_XML_URL ?? '',
+      xmlPath: process.env.LUGI_XML_PATH ?? '',
+      syncIntervalMinutes: int(process.env.LUGI_SYNC_INTERVAL_MINUTES, 1440),
+      idPrefix: process.env.LUGI_ID_PREFIX ?? 'lugi_',
     },
     dropt: {
       enabled: bool(process.env.DROPT_ENABLED, true),

@@ -2,6 +2,7 @@ import { AveoptAdapter } from './aveopt.js';
 import { AveoptXmlAdapter } from './aveoptXml.js';
 import { DroptAdapter } from './dropt.js';
 import { LugiAdapter } from './lugi.js';
+import { LugiXmlAdapter } from './lugiXml.js';
 import { ZakupusAdapter } from './zakupus.js';
 
 /**
@@ -36,13 +37,25 @@ export function buildAdapters({ config, logger }) {
     );
   }
 
-  if (config.suppliers.lugi.enabled && config.suppliers.lugi.baseUrl) {
-    adapters.push(
-      new LugiAdapter({
-        config: config.suppliers.lugi,
-        logger: logger.child({ supplier: 'lugi' }),
-      }),
-    );
+  if (config.suppliers.lugi.enabled) {
+    const lugi = config.suppliers.lugi;
+    if (lugi.xmlUrl || lugi.xmlPath) {
+      adapters.push(
+        new LugiXmlAdapter({
+          config: lugi,
+          logger: logger.child({ supplier: 'lugi' }),
+        }),
+      );
+    } else if (lugi.baseUrl) {
+      adapters.push(
+        new LugiAdapter({
+          config: lugi,
+          logger: logger.child({ supplier: 'lugi' }),
+        }),
+      );
+    } else {
+      logger.warn('lugi enabled but neither LUGI_XML_URL nor LUGI_API_BASE is set');
+    }
   }
 
   if (config.suppliers.zakupus.enabled && (config.suppliers.zakupus.xmlUrl || config.suppliers.zakupus.xmlPath)) {

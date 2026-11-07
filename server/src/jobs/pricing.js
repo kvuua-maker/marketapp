@@ -12,7 +12,7 @@ import { decidePrice, marginPercent } from '../pricing/engine.js';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-function candidates(db, { limit, pauseDays }) {
+function candidates(db, { limit, pauseDays, supplierId }) {
   return all(
     db,
     `SELECT p.id, p.title, p.cost_cents, p.price_cents, p.stock, p.vendor,
@@ -22,16 +22,17 @@ function candidates(db, { limit, pauseDays }) {
        LEFT JOIN pricing_pauses pp ON pp.product_id = p.id
       WHERE p.stock > 0 AND p.cost_cents > 0 AND p.price_cents > 0
         AND (pp.product_id IS NULL OR pp.created_at < datetime('now', ?))
+        AND (? IS NULL OR p.supplier_id = ?)
       ORDER BY views DESC, p.cost_cents DESC
       LIMIT ?`,
-    [`-${pauseDays} days`, limit],
+    [`-${pauseDays} days`, supplierId ?? null, supplierId ?? null, limit],
   );
 }
 
-export async function runDynamicPricing({ db, config, logger, limit }) {
+export async function runDynamicPricing({ db, config, logger, limit, supplierId = null }) {
   const opts = config.pricing.dynamic;
   const max = limit ?? opts.maxProductsPerRun;
-  const rows = candidates(db, { limit: max, pauseDays: opts.pauseDays });
+  const rows = candidates(db, { limit: max, pauseDays: opts.pauseDays, supplierId });
   const now = () => new Date().toISOString();
 
   const stats = {
