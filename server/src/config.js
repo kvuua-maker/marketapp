@@ -64,6 +64,10 @@ export const config = {
       // Public WooCommerce Store API — verified live, ~6400 SKU.
       endpoint: '/wp-json/wc/store/v1/products',
       marginPercent: float(process.env.AVEPTO_MARGIN_PERCENT, NaN),
+      // api = WooCommerce Store API (default), xml = YML/XML price list.
+      source: (process.env.AVEPTO_SOURCE ?? 'api').toLowerCase(),
+      xmlUrl: process.env.AVEPTO_XML_URL ?? '',
+      xmlPath: process.env.AVEPTO_XML_PATH ?? '',
     },
     lugi: {
       enabled: bool(process.env.LUGI_ENABLED, false),
@@ -116,6 +120,14 @@ export const config = {
 
   // Bearer token that protects the analytics summary.
   adminToken: process.env.ADMIN_TOKEN ?? '',
+
+  // Optional Telegram notifications for the supplier sync.
+  notifications: {
+    telegram: {
+      token: process.env.TELEGRAM_BOT_TOKEN ?? '',
+      chatId: process.env.TELEGRAM_CHAT_ID ?? '',
+    },
+  },
 
   // Sign in with Apple: the identity token audience is the iOS bundle id.
   // A comma-separated list keeps TestFlight (com.kvuua.marketapp) and

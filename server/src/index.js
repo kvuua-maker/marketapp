@@ -12,6 +12,7 @@ import { runAllSyncs } from './jobs/sync.js';
 import { startScheduler } from './jobs/scheduler.js';
 import { createAppServer } from './api/server.js';
 import { deliverOutbox } from './orders/outbox.js';
+import { notifySync, telegramConfigured } from './services/telegram.js';
 
 const logger = createLogger({ app: 'marketapp' });
 
@@ -48,10 +49,35 @@ async function main() {
     rounding: config.pricing.rounding,
   });
 
+  const catalogStats = () => {
+    try {
+      const row = db
+        .prepare(
+          "SELECT COUNT(*) AS products, COALESCE(SUM(CASE WHEN stock > 0 THEN 1 ELSE 0 END), 0) AS inStock FROM products",
+        )
+        .get();
+      return { products: row?.products ?? 0, inStock: row?.inStock ?? 0 };
+    } catch {
+      return null;
+    }
+  };
+
+  if (telegramConfigured(config)) {
+    logger.info('telegram notifications enabled');
+  } else {
+    logger.info('telegram notifications disabled (TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID not set)');
+  }
+
   const runNow = async (reason) => {
-    const results = await runAllSyncs({ db, adapters, ai, config, logger });
-    await deliverOutbox(db, { config, logger });
-    return results;
+    try {
+      const results = await runAllSyncs({ db, adapters, ai, config, logger });
+      await deliverOutbox(db, { config, logger });
+      await notifySync({ config, logger, reason, results, catalog: catalogStats() });
+      return results;
+    } catch (error) {
+      await notifySync({ config, logger, reason, error, catalog: catalogStats() });
+      throw error;
+    }
   };
 
   const scheduler = startScheduler({
