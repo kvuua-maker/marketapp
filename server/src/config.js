@@ -140,7 +140,10 @@ export const config = {
 
   images: {
     // SSRF guard: only these hosts may be proxied through /v1/img.
-    allowedHosts: (process.env.IMAGE_ALLOWED_HOSTS ?? 'www.aveopt.com.ua,aveopt.com.ua')
+    allowedHosts: (
+      process.env.IMAGE_ALLOWED_HOSTS ??
+      'www.aveopt.com.ua,aveopt.com.ua,dropt.in.ua,www.dropt.in.ua,feed.lugi.com.ua,lugi.com.ua'
+    )
       .split(',')
       .map((host) => host.trim())
       .filter(Boolean),
