@@ -136,9 +136,16 @@ export const config = {
       lugi: process.env.LUGI_ORDER_EMAIL ?? 'orders@lugi.local',
       zakupus: process.env.ZAKUPUS_ORDER_EMAIL ?? 'zakupusb2b@gmail.com',
     },
-    emailProvider: process.env.EMAIL_PROVIDER ?? 'outbox', // outbox | resend
+    emailProvider: process.env.EMAIL_PROVIDER ?? 'outbox', // outbox | resend | smtp
     emailFrom: process.env.EMAIL_FROM ?? 'orders@marketapp.local',
     resendApiKey: process.env.RESEND_API_KEY ?? '',
+    smtp: {
+      host: process.env.SMTP_HOST ?? '',
+      port: int(process.env.SMTP_PORT, 587),
+      secure: bool(process.env.SMTP_SECURE, false),
+      user: process.env.SMTP_USER ?? '',
+      pass: process.env.SMTP_PASS ?? '',
+    },
   },
 
   images: {

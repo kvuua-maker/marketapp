@@ -1,4 +1,5 @@
 import { run, all, get } from '../db/database.js';
+import { sendViaSmtp, smtpConfigured } from '../services/smtp.js';
 import { formatUah } from '../domain/pricing.js';
 
 /** Builds the supplier-facing email with everything needed for Nova Poshta COD delivery. */
@@ -109,7 +110,10 @@ export async function deliverOutbox(db, { config, logger, limit = 20 }) {
   const provider = config.orders.emailProvider;
   const pending = all(db, "SELECT * FROM outbox WHERE status = 'queued' ORDER BY id ASC LIMIT ?", { 1: limit });
   if (pending.length === 0) return { sent: 0, failed: 0, pending: 0 };
-  if (provider !== 'resend' || !config.orders.resendApiKey) {
+
+  const useResend = provider === 'resend' && Boolean(config.orders.resendApiKey);
+  const useSmtp = provider === 'smtp' && smtpConfigured(config);
+  if (!useResend && !useSmtp) {
     logger.info('outbox delivery skipped (provider not configured)', { pending: pending.length, provider });
     return { sent: 0, failed: 0, pending: pending.length };
   }
@@ -118,14 +122,26 @@ export async function deliverOutbox(db, { config, logger, limit = 20 }) {
   let failed = 0;
   for (const entry of pending) {
     try {
-      await sendViaResend({
-        apiKey: config.orders.resendApiKey,
-        from: config.orders.emailFrom,
-        to: entry.to_addr,
-        subject: entry.subject,
-        text: entry.body,
-        html: renderEmailHtml(entry.body),
-      });
+      if (useSmtp) {
+        await sendViaSmtp({
+          config,
+          logger,
+          from: config.orders.emailFrom,
+          to: entry.to_addr,
+          subject: entry.subject,
+          text: entry.body,
+          html: renderEmailHtml(entry.body),
+        });
+      } else {
+        await sendViaResend({
+          apiKey: config.orders.resendApiKey,
+          from: config.orders.emailFrom,
+          to: entry.to_addr,
+          subject: entry.subject,
+          text: entry.body,
+          html: renderEmailHtml(entry.body),
+        });
+      }
       run(db, "UPDATE outbox SET status = 'sent', sent_at = ? WHERE id = ?", {
         1: new Date().toISOString(),
         2: entry.id,
