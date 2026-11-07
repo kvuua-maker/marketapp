@@ -142,7 +142,7 @@ export async function runSupplierSync({ db, adapter, ai, config, marginPercent, 
 
   try {
     for await (const raw of adapter.fetchProducts({
-      maxProducts: config.sync.maxProductsPerSupplier,
+      maxProducts: adapter.maxProducts ?? config.sync.maxProductsPerSupplier,
       pageSize: config.sync.pageSize,
     })) {
       raw.supplierId = adapter.id;

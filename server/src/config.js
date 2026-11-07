@@ -76,6 +76,17 @@ export const config = {
       companySecret: process.env.LUGI_COMPANY_SECRET ?? '',
       marginPercent: float(process.env.LUGI_MARGIN_PERCENT, NaN),
     },
+    dropt: {
+      enabled: bool(process.env.DROPT_ENABLED, true),
+      xmlUrl:
+        process.env.DROPT_XML_URL ??
+        'https://dropt.in.ua/index.php?route=export/prom&markup=0&ids=uniq',
+      xmlPath: process.env.DROPT_XML_PATH ?? '',
+      marginPercent: float(process.env.DROPT_MARGIN_PERCENT, 15),
+      // Daily cycle by default; the main supplier keeps its 90-minute schedule.
+      syncIntervalMinutes: int(process.env.DROPT_SYNC_INTERVAL_MINUTES, 1440),
+      idPrefix: process.env.DROPT_ID_PREFIX ?? 'dropt_',
+    },
     zakupus: {
       enabled: bool(process.env.ZAKUPUS_ENABLED, false),
       xmlUrl: process.env.ZAKUPUS_XML_URL ?? '',

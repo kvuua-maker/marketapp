@@ -6,7 +6,7 @@ import { getSetting, setSetting } from '../db/database.js';
  * - then every `intervalMinutes`
  * - never overlaps two syncs
  */
-export function startScheduler({ db, intervalMinutes, staleAfterMinutes, runNow, logger }) {
+export function startScheduler({ db, intervalMinutes, staleAfterMinutes, runNow, logger, settingKey = 'last_sync_global' }) {
   let running = false;
   let timer = null;
   let stopped = false;
@@ -18,7 +18,7 @@ export function startScheduler({ db, intervalMinutes, staleAfterMinutes, runNow,
     try {
       logger.info('sync started', { reason });
       const results = await runNow(reason);
-      setSetting(db, 'last_sync_global', new Date().toISOString());
+      setSetting(db, settingKey, new Date().toISOString());
       logger.info('sync completed', { reason, ms: Date.now() - startedAt, results: results?.length ?? 0 });
       return results;
     } catch (error) {
@@ -33,7 +33,7 @@ export function startScheduler({ db, intervalMinutes, staleAfterMinutes, runNow,
   timer = setInterval(() => { void tick('interval'); }, intervalMs);
   timer.unref?.();
 
-  const lastSync = getSetting(db, 'last_sync_global');
+  const lastSync = getSetting(db, settingKey);
   const stale = !lastSync || Date.now() - Date.parse(lastSync) > staleAfterMinutes * 60_000;
   if (stale) {
     const boot = setTimeout(() => { void tick('startup'); }, 2_000);

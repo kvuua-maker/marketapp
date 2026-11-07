@@ -1,5 +1,6 @@
 import { AveoptAdapter } from './aveopt.js';
 import { AveoptXmlAdapter } from './aveoptXml.js';
+import { DroptAdapter } from './dropt.js';
 import { LugiAdapter } from './lugi.js';
 import { ZakupusAdapter } from './zakupus.js';
 
@@ -23,6 +24,15 @@ export function buildAdapters({ config, logger }) {
       wantsXml && hasXml
         ? new AveoptXmlAdapter({ config: aveopt, logger: logger.child({ supplier: 'aveopt' }) })
         : new AveoptAdapter({ config: aveopt, logger: logger.child({ supplier: 'aveopt' }) }),
+    );
+  }
+
+  if (config.suppliers.dropt.enabled && (config.suppliers.dropt.xmlUrl || config.suppliers.dropt.xmlPath)) {
+    adapters.push(
+      new DroptAdapter({
+        config: config.suppliers.dropt,
+        logger: logger.child({ supplier: 'dropt' }),
+      }),
     );
   }
 

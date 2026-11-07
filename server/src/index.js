@@ -68,25 +68,69 @@ async function main() {
     logger.info('telegram notifications disabled (TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID not set)');
   }
 
-  const runNow = async (reason) => {
-    try {
-      const results = await runAllSyncs({ db, adapters, ai, config, logger });
-      await deliverOutbox(db, { config, logger });
-      await notifySync({ config, logger, reason, results, catalog: catalogStats() });
-      return results;
-    } catch (error) {
-      await notifySync({ config, logger, reason, error, catalog: catalogStats() });
-      throw error;
-    }
+  // Two independent schedules:
+  //  • the main supplier(s) every SYNC_INTERVAL_MINUTES (90 min by default)
+  //  • Dropt (and any other slow feed) daily — DROPT_SYNC_INTERVAL_MINUTES
+  // A shared queue guarantees they never write to SQLite at the same time.
+  const intervalFor = (adapter) =>
+    config.suppliers[adapter.id]?.syncIntervalMinutes ?? config.sync.intervalMinutes;
+
+  const dailyAdapters = adapters.filter((adapter) => intervalFor(adapter) >= 1440);
+  const frequentAdapters = adapters.filter((adapter) => intervalFor(adapter) < 1440);
+
+  let syncQueue = Promise.resolve();
+  const exclusive = (task) => {
+    const next = syncQueue.then(task, task);
+    syncQueue = next.then(
+      () => undefined,
+      () => undefined,
+    );
+    return next;
   };
+
+  const makeRunNow = (adapterList, label) =>
+    async (reason) =>
+      exclusive(async () => {
+        try {
+          const results = await runAllSyncs({ db, adapters: adapterList, ai, config, logger });
+          await deliverOutbox(db, { config, logger });
+          await notifySync({ config, logger, reason: `${label}:${reason}`, results, catalog: catalogStats() });
+          return results;
+        } catch (error) {
+          await notifySync({ config, logger, reason: `${label}:${reason}`, error, catalog: catalogStats() });
+          throw error;
+        }
+      });
 
   const scheduler = startScheduler({
     db,
     intervalMinutes: config.sync.intervalMinutes,
     staleAfterMinutes: config.sync.staleAfterMinutes,
-    runNow,
+    runNow: makeRunNow(frequentAdapters, 'catalog'),
     logger: logger.child({ job: 'scheduler' }),
   });
+
+  const dailyInterval = dailyAdapters.length
+    ? Math.max(...dailyAdapters.map((adapter) => intervalFor(adapter)))
+    : 1440;
+
+  const dailyScheduler = dailyAdapters.length
+    ? startScheduler({
+        db,
+        intervalMinutes: dailyInterval,
+        staleAfterMinutes: dailyInterval,
+        runNow: makeRunNow(dailyAdapters, 'daily'),
+        logger: logger.child({ job: 'scheduler-daily' }),
+        settingKey: 'last_sync_daily',
+      })
+    : null;
+
+  if (dailyAdapters.length) {
+    logger.info('daily supplier schedule enabled', {
+      suppliers: dailyAdapters.map((adapter) => adapter.id),
+      intervalMinutes: dailyInterval,
+    });
+  }
 
   const { server } = createAppServer({
     db,
@@ -104,6 +148,7 @@ async function main() {
   const shutdown = (signal) => {
     logger.info('shutting down', { signal });
     scheduler.stop();
+    dailyScheduler?.stop();
     server.close(() => {
       try {
         db.close();

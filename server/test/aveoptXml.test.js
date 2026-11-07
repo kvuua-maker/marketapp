@@ -102,3 +102,45 @@ test('telegram summary is human readable and respects configuration', () => {
   assert.match(failure, /sync failed/);
   assert.match(failure, /feed timeout/);
 });
+
+test('Dropt adapter prefixes ids and keeps the supplier/feed id separate', async () => {
+  const { DroptAdapter } = await import('../src/suppliers/dropt.js');
+  const { mkdtempSync, writeFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+
+  const feed = `<?xml version="1.0" encoding="UTF-8"?>
+<yml_catalog date="2026-11-07 08:00"><shop>
+  <currencies><currency id="UAH" rate="1"/></currencies>
+  <categories><category id="63">Побутова техніка</category></categories>
+  <offers>
+    <offer id="555" available="true">
+      <price>1000</price>
+      <currencyId>UAH</currencyId>
+      <categoryId>63</categoryId>
+      <picture>https://cdn.dropt.in.ua/555.jpg</picture>
+      <name>Пилосос Dropt D-555</name>
+      <description><![CDATA[Потужний пилосос для дому та авто, 2000 Вт, контейнер 2 л.]]></description>
+      <quantity_in_stock>4</quantity_in_stock>
+    </offer>
+  </offers>
+</shop></yml_catalog>`;
+
+  const dir = mkdtempSync(join(tmpdir(), 'dropt-yml-'));
+  const path = join(dir, 'dropt.yml');
+  writeFileSync(path, feed, 'utf8');
+
+  const adapter = new DroptAdapter({ config: { xmlPath: path, idPrefix: 'dropt_' }, logger });
+  assert.equal(adapter.id, 'dropt');
+  assert.equal(adapter.feedOrigin(), 'https://dropt.in.ua');
+
+  const products = [];
+  for await (const product of adapter.fetchProducts()) products.push(product);
+  assert.equal(products.length, 1);
+  assert.equal(products[0].externalId, '555');
+  assert.equal(products[0].idPrefix, 'dropt_');
+  assert.equal(`${products[0].idPrefix}${products[0].externalId}`, 'dropt_555');
+  assert.equal(products[0].supplierId, 'dropt');
+  assert.equal(products[0].costCents, 100000);
+  assert.equal(products[0].categoryRaw, 'Побутова техніка');
+});

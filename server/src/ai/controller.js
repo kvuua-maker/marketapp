@@ -142,7 +142,7 @@ export class AIController {
       minMarginPercent: this.config.pricing.minMarginPercent,
     });
     return {
-      id: `${raw.supplierId}:${raw.externalId}`,
+      id: raw.idPrefix ? `${raw.idPrefix}${raw.externalId}` : `${raw.supplierId}:${raw.externalId}`,
       supplierId: raw.supplierId,
       externalId: raw.externalId,
       title: ai.title,
