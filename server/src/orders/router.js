@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { get, all, run, transaction } from '../db/database.js';
 import { ValidationError, NotFoundError } from '../core/errors.js';
+import { notifyOwnerNewOrder } from '../services/orderNotifications.js';
 import { composeSupplierEmail, enqueueOutbox } from './outbox.js';
 import { normPhone } from '../domain/normalize.js';
 
@@ -227,6 +228,21 @@ export async function createOrder({ db, adapters, config, logger, payload, novaP
 
   run(db, 'UPDATE orders SET status = ? WHERE id = ?', { 1: orderStatus, 2: orderId });
   logger.info('order created', { orderId, totalCents, suppliers: routed.length, status: orderStatus });
+
+  // Free channel: every order is pushed to the owner's Telegram chat.
+  notifyOwnerNewOrder({
+    config,
+    logger,
+    orderId,
+    totalCents,
+    customer,
+    items: products.map((product) => ({
+      title: product.title,
+      qty: product.qty,
+      unitPriceCents: product.price_cents,
+    })),
+    suppliers: [...new Set(routed.map((entry) => entry.supplierId))],
+  }).catch(() => {});
 
   // Logistics never blocks the order: a missing/failed waybill is recorded, not thrown.
   let ttn = null;

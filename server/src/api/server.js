@@ -328,6 +328,43 @@ export function createAppServer({ db, adapters, ai, config, logger, syncTrigger 
         return;
       }
 
+      if (req.method === 'GET' && (path === '/admin/orders' || path === '/admin/orders.json')) {
+        if (!config.adminToken || url.searchParams.get('token') !== config.adminToken) {
+          throw new AppError('Forbidden', { code: 'forbidden', status: 403 });
+        }
+        const orders = db
+          .prepare('SELECT id, status, total_cents, ttn, created_at FROM orders ORDER BY created_at DESC LIMIT 200')
+          .all();
+        const itemsStmt = db.prepare(
+          'SELECT title_snapshot, qty, unit_price_cents, supplier_id, supplier_order_status FROM order_items WHERE order_id = ?',
+        );
+        const rows = orders.map((order) => ({ ...order, items: itemsStmt.all(order.id) }));
+
+        if (path === '/admin/orders.json') {
+          sendJson(res, 200, { orders: rows });
+          return;
+        }
+
+        const esc = (value) =>
+          String(value ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]);
+        const body = rows
+          .map(
+            (order) => `<tr><td>${esc(order.created_at.slice(0, 16).replace('T', ' '))}</td><td>${esc(order.id)}</td>
+              <td>${esc(order.status)}</td><td>${(order.total_cents / 100).toFixed(2)} ₴</td>
+              <td>${order.items.map((i) => `${esc(i.title_snapshot)} ×${i.qty} (${esc(i.supplier_id)}, ${esc(i.supplier_order_status)})`).join('<br>')}</td>
+              <td>${esc(order.ttn ?? '—')}</td></tr>`,
+          )
+          .join('');
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+        res.end(`<!doctype html><html lang="uk"><head><meta charset="utf-8"><meta http-equiv="refresh" content="30">
+          <title>MarketApp — замовлення</title><style>body{font:14px system-ui;margin:20px}table{border-collapse:collapse;width:100%}
+          td,th{border:1px solid #ddd;padding:6px;vertical-align:top}th{background:#f4f4f4;text-align:left}</style></head>
+          <body><h1>Замовлення (${rows.length})</h1><p>Оновлюється кожні 30 с · <a href="?token=${esc(url.searchParams.get('token'))}">JSON</a></p>
+          <table><tr><th>Дата</th><th>Номер</th><th>Статус</th><th>Сума</th><th>Товари</th><th>ТТН</th></tr>${body || '<tr><td colspan="6">Замовлень немає</td></tr>'}</table>
+          </body></html>`);
+        return;
+      }
+
       if (req.method === 'GET' && path === '/v1/img') {
         await handleImageProxy(req, res, url, { config, logger });
         return;
