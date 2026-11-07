@@ -3,6 +3,7 @@ import { ZakupusAdapter } from './zakupus.js';
 import { fetchText } from '../core/httpClient.js';
 import { SalesDriveClient } from '../salesdrive/client.js';
 import { buildSalesDriveOrder } from '../salesdrive/payload.js';
+import { sendDroptOrderToManager } from '../services/telegramOrders.js';
 
 /**
  * Dropt — second supplier, Prom/YML export.
@@ -97,8 +98,25 @@ export class DroptAdapter extends ZakupusAdapter {
 
   async placeOrder({ order, customer, items }) {
     const bridge = this.config.salesdrive ?? {};
+
+    // Free path: Telegram message to the Dropt manager.
+    if (this.config.botToken && this.config.managerChatId) {
+      const result = await sendDroptOrderToManager({
+        botToken: this.config.botToken,
+        chatId: this.config.managerChatId,
+        order,
+        customer,
+        items,
+        totalCents: items.reduce((sum, item) => sum + item.unitPriceCents * item.qty, 0),
+        logger: this.logger,
+      });
+      return { status: 'sent', ref: `tg:${result.messageId ?? order.id}` };
+    }
+
     if (!bridge.apiKey || !bridge.baseUrl) {
-      const error = new Error('Dropt: SalesDrive bridge is not configured (SALESDRIVE_API_KEY / SALESDRIVE_BASE_URL)');
+      const error = new Error(
+        'Dropt: neither Telegram (TELEGRAM_BOT_TOKEN/DROPT_MANAGER_CHAT_ID) nor SalesDrive is configured',
+      );
       error.code = 'not_configured';
       throw error;
     }

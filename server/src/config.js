@@ -110,6 +110,9 @@ export const config = {
       // Daily cycle by default; the main supplier keeps its 90-minute schedule.
       syncIntervalMinutes: int(process.env.DROPT_SYNC_INTERVAL_MINUTES, 1440),
       idPrefix: process.env.DROPT_ID_PREFIX ?? 'dropt_',
+      // Variant C: Telegram dispatch to the Dropt manager (free).
+      managerChatId: process.env.DROPT_MANAGER_CHAT_ID ?? '',
+      botToken: process.env.TELEGRAM_BOT_TOKEN ?? '',
       salesdrive: {
         apiKey: process.env.SALESDRIVE_API_KEY ?? '',
         baseUrl: process.env.SALESDRIVE_BASE_URL ?? '',
