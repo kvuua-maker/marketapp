@@ -6,6 +6,12 @@ import { guessBrand } from '../domain/brand.js';
  * Adds search/rating/promo/delivery columns and backfills derived values.
  */
 export function migrate(db, logger) {
+  const productColumns = db.prepare('PRAGMA table_info(products)').all().map((row) => row.name);
+  if (!productColumns.includes('hidden_by_price')) {
+    db.exec('ALTER TABLE products ADD COLUMN hidden_by_price INTEGER NOT NULL DEFAULT 0');
+    logger?.info('migration: products.hidden_by_price added');
+  }
+
   const columns = (table) => db.prepare(`PRAGMA table_info(${table})`).all().map((row) => row.name);
 
   const addColumn = (table, name, ddl) => {

@@ -43,6 +43,7 @@ export async function runDynamicPricing({ db, config, logger, limit, supplierId 
     paused: 0,
     noData: 0,
     unchanged: 0,
+    hidden: 0,
     dryRun: 0,
     errors: 0,
     marginSum: 0,
@@ -131,6 +132,24 @@ export async function runDynamicPricing({ db, config, logger, limit, supplierId 
         now(),
       ],
     );
+
+    // Strict visibility rule: our final (customer-facing) price must be
+    // strictly below the cheapest matched competitor, otherwise hide.
+    if (matched.length > 0) {
+      const cheapestMatched = Math.min(...matched.map((offer) => offer.priceCents));
+      const applied = decision.status === 'updated' || decision.status === 'floor';
+      const finalPrice = applied && !opts.dryRun ? decision.priceCents : product.price_cents;
+      const shouldHide = finalPrice >= cheapestMatched ? 1 : 0;
+      run(db, 'UPDATE products SET hidden_by_price = ? WHERE id = ?', [shouldHide, product.id]);
+      if (shouldHide) {
+        stats.hidden += 1;
+        logger.info('product hidden: not cheaper than competitor', {
+          productId: product.id,
+          ours: finalPrice,
+          cheapest: cheapestMatched,
+        });
+      }
+    }
 
     if ((decision.status === 'updated' || decision.status === 'floor') && opts.dryRun) {
       stats.dryRun += 1;

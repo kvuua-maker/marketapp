@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS products (
   ai_meta_json    TEXT NOT NULL DEFAULT '{}',
   created_at      TEXT NOT NULL,
   updated_at      TEXT NOT NULL,
+  hidden_by_price INTEGER NOT NULL DEFAULT 0,     -- 1 = our price is not below the cheapest competitor
   UNIQUE (supplier_id, external_id)
 );
 

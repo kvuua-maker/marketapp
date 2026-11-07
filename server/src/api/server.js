@@ -235,10 +235,10 @@ function buildProductsQuery(query) {
     params[':maxPrice'] = query.maxPrice;
   }
   if (!query.includeOutOfStock && !query.onlyInStock) {
-    where.push('p.stock > 0');
+    where.push('p.stock > 0 AND p.hidden_by_price = 0');
   }
   if (query.onlyInStock) {
-    where.push('p.stock > 0');
+    where.push('p.stock > 0 AND p.hidden_by_price = 0');
   }
 
   const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
@@ -356,7 +356,7 @@ export function createAppServer({ db, adapters, ai, config, logger, syncTrigger 
 
       if (req.method === 'GET' && path === '/v1/health') {
         const products = get(db, 'SELECT COUNT(*) AS count FROM products')?.count ?? 0;
-        const inStock = get(db, 'SELECT COUNT(*) AS count FROM products WHERE stock > 0')?.count ?? 0;
+        const inStock = get(db, 'SELECT COUNT(*) AS count FROM products WHERE stock > 0 AND hidden_by_price = 0')?.count ?? 0;
         const suppliers = all(db, 'SELECT id, name, enabled FROM suppliers ORDER BY id').map((supplier) => {
           const lastRun = get(
             db,
@@ -381,7 +381,7 @@ export function createAppServer({ db, adapters, ai, config, logger, syncTrigger 
         const rows = all(
           db,
           `SELECT category AS name, COUNT(*) AS count
-           FROM products WHERE stock > 0
+           FROM products WHERE stock > 0 AND hidden_by_price = 0
            GROUP BY category ORDER BY count DESC, name ASC`,
         );
         const total = rows.reduce((sum, row) => sum + row.count, 0);
@@ -393,7 +393,7 @@ export function createAppServer({ db, adapters, ai, config, logger, syncTrigger 
         const rows = all(
           db,
           `SELECT vendor AS name, COUNT(*) AS count FROM products
-           WHERE stock > 0 AND vendor IS NOT NULL AND vendor <> ''
+           WHERE stock > 0 AND hidden_by_price = 0 AND vendor IS NOT NULL AND vendor <> ''
            GROUP BY vendor ORDER BY count DESC LIMIT 60`,
         );
         sendJson(res, 200, { items: rows }, { 'cache-control': 'public, max-age=300' });
@@ -425,7 +425,7 @@ export function createAppServer({ db, adapters, ai, config, logger, syncTrigger 
         const rows = all(
           db,
           `SELECT * FROM products
-           WHERE stock > 0 AND old_price_cents IS NOT NULL AND old_price_cents > price_cents
+           WHERE stock > 0 AND hidden_by_price = 0 AND old_price_cents IS NOT NULL AND old_price_cents > price_cents
            ORDER BY (old_price_cents - price_cents) DESC LIMIT ?`,
           [limit],
         );
@@ -436,12 +436,12 @@ export function createAppServer({ db, adapters, ai, config, logger, syncTrigger 
       if (req.method === 'GET' && path === '/v1/filters') {
         const range = get(
           db,
-          'SELECT MIN(price_cents) AS minPrice, MAX(price_cents) AS maxPrice FROM products WHERE stock > 0',
+          'SELECT MIN(price_cents) AS minPrice, MAX(price_cents) AS maxPrice FROM products WHERE stock > 0 AND hidden_by_price = 0',
         );
         const brands = all(
           db,
           `SELECT vendor AS name, COUNT(*) AS count FROM products
-           WHERE stock > 0 AND vendor IS NOT NULL AND vendor <> ''
+           WHERE stock > 0 AND hidden_by_price = 0 AND vendor IS NOT NULL AND vendor <> ''
            GROUP BY vendor ORDER BY count DESC LIMIT 40`,
         );
         sendJson(
@@ -463,19 +463,19 @@ export function createAppServer({ db, adapters, ai, config, logger, syncTrigger 
         const titles = all(
           db,
           `SELECT id, title, price_cents AS priceCents FROM products
-           WHERE stock > 0 AND title_norm LIKE ? ORDER BY length(title) ASC LIMIT 6`,
+           WHERE stock > 0 AND hidden_by_price = 0 AND title_norm LIKE ? ORDER BY length(title) ASC LIMIT 6`,
           [like],
         );
         const brands = all(
           db,
           `SELECT DISTINCT vendor AS name FROM products
-           WHERE stock > 0 AND vendor <> '' AND brand_norm LIKE ? LIMIT 4`,
+           WHERE stock > 0 AND hidden_by_price = 0 AND vendor <> '' AND brand_norm LIKE ? LIMIT 4`,
           [like],
         );
         const categories = all(
           db,
           `SELECT DISTINCT category AS name FROM products
-           WHERE stock > 0 AND category_norm LIKE ? LIMIT 3`,
+           WHERE stock > 0 AND hidden_by_price = 0 AND category_norm LIKE ? LIMIT 3`,
           [like],
         );
         sendJson(
