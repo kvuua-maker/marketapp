@@ -144,3 +144,52 @@ test('Dropt adapter prefixes ids and keeps the supplier/feed id separate', async
   assert.equal(products[0].costCents, 100000);
   assert.equal(products[0].categoryRaw, 'Побутова техніка');
 });
+
+test('Dropt canary blocks a feed that already carries a supplier markup', async () => {
+  const { DroptAdapter } = await import('../src/suppliers/dropt.js');
+  const { mkdtempSync, writeFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+
+  const dir = mkdtempSync(join(tmpdir(), 'dropt-canary-'));
+  const path = join(dir, 'dropt.yml');
+  writeFileSync(
+    path,
+    `<?xml version="1.0" encoding="UTF-8"?><yml_catalog><shop>
+       <name>Dropt</name>
+       <offers><offer id="1"><price>100</price><currencyId>UAH</currencyId>
+       <picture>https://cdn.dropt.in.ua/1.jpg</picture><name>Товар</name>
+       <description>Достатньо довгий опис товару для проходження валідації.</description>
+       <quantity_in_stock>1</quantity_in_stock></offer></offers>
+     </shop></yml_catalog>`,
+    'utf8',
+  );
+
+  // 1) markup in the URL
+  const byUrl = new DroptAdapter({
+    config: { xmlUrl: 'https://dropt.in.ua/index.php?route=export/prom&markup=25&ids=uniq', xmlPath: path },
+    logger,
+  });
+  await assert.rejects(async () => {
+    for await (const product of byUrl.fetchProducts()) void product;
+  }, /markup=25/);
+  assert.equal(await byUrl.healthCheck(), false);
+
+  // 2) supplier markup visible in the feed name
+  const dir2 = mkdtempSync(join(tmpdir(), 'dropt-canary2-'));
+  const path2 = join(dir2, 'dropt.yml');
+  writeFileSync(path2, (await import('node:fs')).readFileSync(path, 'utf8').replace('<name>Dropt</name>', '<name>Dropt (Наценка 25%)</name>'), 'utf8');
+  const byName = new DroptAdapter({ config: { xmlPath: path2 }, logger });
+  await assert.rejects(async () => {
+    for await (const product of byName.fetchProducts()) void product;
+  }, /supplier markup/i);
+
+  // 3) markup=0 is accepted
+  const clean = new DroptAdapter({
+    config: { xmlUrl: 'https://dropt.in.ua/index.php?route=export/prom&markup=0&ids=uniq', xmlPath: path },
+    logger,
+  });
+  const products = [];
+  for await (const product of clean.fetchProducts()) products.push(product);
+  assert.equal(products.length, 1);
+});
