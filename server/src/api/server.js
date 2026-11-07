@@ -1,4 +1,5 @@
 import { createServer } from 'node:http';
+import { handleSalesDriveWebhook } from '../salesdrive/webhook.js';
 import { readFileSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { all, get, run } from '../db/database.js';
@@ -316,6 +317,17 @@ export function createAppServer({ db, adapters, ai, config, logger, syncTrigger 
     }
 
     try {
+      if (req.method === 'POST' && path === '/v1/webhooks/salesdrive') {
+        const token = String(req.headers['x-webhook-token'] ?? url.searchParams.get('token') ?? '');
+        if (!config.salesdrive?.webhookSecret || token !== config.salesdrive.webhookSecret) {
+          throw new AppError('Forbidden', { code: 'forbidden', status: 403 });
+        }
+        const body = await readJsonBody(req).catch(() => ({}));
+        const result = handleSalesDriveWebhook({ db, body, config, logger });
+        sendJson(res, 200, { ok: true, ...result });
+        return;
+      }
+
       if (req.method === 'GET' && path === '/v1/img') {
         await handleImageProxy(req, res, url, { config, logger });
         return;

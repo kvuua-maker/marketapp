@@ -1,6 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { ZakupusAdapter } from './zakupus.js';
 import { fetchText } from '../core/httpClient.js';
+import { SalesDriveClient } from '../salesdrive/client.js';
+import { buildSalesDriveOrder } from '../salesdrive/payload.js';
 
 /**
  * Dropt — second supplier, Prom/YML export.
@@ -91,6 +93,30 @@ export class DroptAdapter extends ZakupusAdapter {
       this.logger?.error('dropt feed blocked', { error: error.message, code: error.code });
       return false;
     }
+  }
+
+  async placeOrder({ order, customer, items }) {
+    const bridge = this.config.salesdrive ?? {};
+    if (!bridge.apiKey || !bridge.baseUrl) {
+      const error = new Error('Dropt: SalesDrive bridge is not configured (SALESDRIVE_API_KEY / SALESDRIVE_BASE_URL)');
+      error.code = 'not_configured';
+      throw error;
+    }
+
+    const client = new SalesDriveClient({
+      baseUrl: bridge.baseUrl,
+      apiKey: bridge.apiKey,
+      logger: this.logger,
+    });
+    const payload = buildSalesDriveOrder({
+      order,
+      customer,
+      items,
+      options: { paymentMethod: bridge.paymentMethod, shippingMethod: bridge.shippingMethod },
+    });
+    const result = await client.createOrder(payload);
+    this.logger?.info('dropt order sent via SalesDrive', { orderId: order.id, salesdriveId: result.id });
+    return { status: 'sent', ref: result.id != null ? String(result.id) : order.id };
   }
 
   mapBlock(block, categoryMap = new Map()) {

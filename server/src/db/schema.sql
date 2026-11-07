@@ -260,3 +260,15 @@ CREATE TABLE IF NOT EXISTS pricing_pauses (
   reason            TEXT NOT NULL,
   created_at        TEXT NOT NULL
 );
+
+-- Incoming webhooks (SalesDrive status changes) for auditing and replay.
+CREATE TABLE IF NOT EXISTS webhook_events (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  source        TEXT NOT NULL,
+  external_id   TEXT,
+  event         TEXT,
+  payload_json  TEXT NOT NULL,
+  result        TEXT NOT NULL,
+  created_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_webhook_events_external ON webhook_events(external_id, created_at);

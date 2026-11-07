@@ -105,6 +105,12 @@ export const config = {
       // Daily cycle by default; the main supplier keeps its 90-minute schedule.
       syncIntervalMinutes: int(process.env.DROPT_SYNC_INTERVAL_MINUTES, 1440),
       idPrefix: process.env.DROPT_ID_PREFIX ?? 'dropt_',
+      salesdrive: {
+        apiKey: process.env.SALESDRIVE_API_KEY ?? '',
+        baseUrl: process.env.SALESDRIVE_BASE_URL ?? '',
+        paymentMethod: process.env.SALESDRIVE_PAYMENT_METHOD ?? 'cod',
+        shippingMethod: process.env.SALESDRIVE_SHIPPING_METHOD ?? 'novaposhta',
+      },
     },
     zakupus: {
       enabled: bool(process.env.ZAKUPUS_ENABLED, false),
@@ -150,6 +156,20 @@ export const config = {
 
   // Bearer token that protects the analytics summary.
   adminToken: process.env.ADMIN_TOKEN ?? '',
+
+  // SalesDrive bridge (our app → SalesDrive → Dropt).
+  salesdrive: {
+    apiKey: process.env.SALESDRIVE_API_KEY ?? '',
+    baseUrl: process.env.SALESDRIVE_BASE_URL ?? '',
+    webhookSecret: process.env.SALESDRIVE_WEBHOOK_SECRET ?? '',
+    statusMap: (() => {
+      try {
+        return JSON.parse(process.env.SALESDRIVE_STATUS_MAP ?? '{}');
+      } catch {
+        return {};
+      }
+    })(),
+  },
 
   // Daily register of Dropt margins that should be paid out (no API on their side).
   payouts: {
