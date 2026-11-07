@@ -12,7 +12,9 @@ import { runAllSyncs } from './jobs/sync.js';
 import { startScheduler } from './jobs/scheduler.js';
 import { createAppServer } from './api/server.js';
 import { deliverOutbox } from './orders/outbox.js';
-import { notifySync, telegramConfigured } from './services/telegram.js';
+import { notifySync, sendTelegram, formatPricingSummary, telegramConfigured } from './services/telegram.js';
+import { runDynamicPricing } from './jobs/pricing.js';
+import { buildDroptPayoutReport, formatPayoutReport } from './payouts/dropt.js';
 
 const logger = createLogger({ app: 'marketapp' });
 
@@ -132,6 +134,59 @@ async function main() {
     });
   }
 
+  const pricingOptions = config.pricing.dynamic;
+  const pricingScheduler = pricingOptions.enabled
+    ? startScheduler({
+        db,
+        intervalMinutes: pricingOptions.intervalMinutes,
+        staleAfterMinutes: pricingOptions.intervalMinutes,
+        settingKey: 'last_pricing_run',
+        logger: logger.child({ job: 'pricing' }),
+        runNow: async (reason) =>
+          exclusive(async () => {
+            const summary = await runDynamicPricing({
+              db,
+              config,
+              logger: logger.child({ job: 'pricing' }),
+              limit: pricingOptions.maxProductsPerRun,
+            });
+            await sendTelegram({ config, logger, text: formatPricingSummary(summary) });
+            logger.info('pricing run finished', { reason, ...summary });
+            return summary;
+          }),
+      })
+    : null;
+
+  const payoutScheduler = config.payouts.enabled
+    ? startScheduler({
+        db,
+        intervalMinutes: config.payouts.intervalMinutes,
+        staleAfterMinutes: config.payouts.intervalMinutes,
+        settingKey: 'last_payout_report',
+        logger: logger.child({ job: 'payouts' }),
+        runNow: async () => {
+          const report = buildDroptPayoutReport(db, { holdDays: config.payouts.holdDays });
+          logger.info('dropt payout report', report.totals);
+          await sendTelegram({ config, logger, text: formatPayoutReport(report) });
+          return report.totals;
+        },
+      })
+    : null;
+
+  if (pricingOptions.enabled) {
+    logger.info('dynamic pricing enabled', {
+      dryRun: pricingOptions.dryRun,
+      floorMargin: pricingOptions.floorMarginPercent,
+      undercut: pricingOptions.undercutPercent,
+      maxMargin: pricingOptions.maxMarginPercent,
+      maxDailyChange: pricingOptions.maxDailyChangePercent,
+      sources: pricingOptions.sources,
+      maxProducts: pricingOptions.maxProductsPerRun,
+    });
+  } else {
+    logger.info('dynamic pricing disabled (DYNAMIC_PRICING_ENABLED not set)');
+  }
+
   const { server } = createAppServer({
     db,
     adapters,
@@ -149,6 +204,8 @@ async function main() {
     logger.info('shutting down', { signal });
     scheduler.stop();
     dailyScheduler?.stop();
+    pricingScheduler?.stop();
+    payoutScheduler?.stop();
     server.close(() => {
       try {
         db.close();

@@ -216,3 +216,47 @@ CREATE TABLE IF NOT EXISTS user_carts (
 );
 
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+
+-- Dynamic pricing: competitor snapshots and every decision we made.
+CREATE TABLE IF NOT EXISTS competitor_prices (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  product_id        TEXT NOT NULL,
+  source            TEXT NOT NULL,
+  competitor_title  TEXT,
+  competitor_url    TEXT,
+  price_cents       INTEGER NOT NULL,
+  match_score       REAL,
+  fetched_at        TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_competitor_prices_product ON competitor_prices(product_id, fetched_at);
+
+CREATE TABLE IF NOT EXISTS price_recommendations (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  product_id        TEXT NOT NULL,
+  old_price_cents   INTEGER NOT NULL,
+  new_price_cents   INTEGER NOT NULL,
+  floor_cents       INTEGER,
+  ceiling_cents     INTEGER,
+  cheapest_cents    INTEGER,
+  status            TEXT NOT NULL,          -- updated | unchanged | no_data | floor | paused | invalid
+  reason            TEXT,
+  source            TEXT,
+  created_at        TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_price_recs_product ON price_recommendations(product_id, created_at);
+
+CREATE TABLE IF NOT EXISTS price_history (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  product_id        TEXT NOT NULL,
+  price_cents       INTEGER NOT NULL,
+  old_price_cents   INTEGER,
+  reason            TEXT,
+  created_at        TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_price_history_product ON price_history(product_id, created_at);
+
+CREATE TABLE IF NOT EXISTS pricing_pauses (
+  product_id        TEXT PRIMARY KEY,
+  reason            TEXT NOT NULL,
+  created_at        TEXT NOT NULL
+);

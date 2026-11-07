@@ -34,11 +34,19 @@ export function formatSyncSummary({ reason = 'interval', results = [], error = n
   return lines.join('\n');
 }
 
-export async function notifySync({ config, logger, reason, results = [], error = null, catalog = null } = {}) {
+export function formatPricingSummary(summary = {}) {
+  return [
+    '💰 Dynamic pricing',
+    `scanned ${summary.scanned ?? 0} | updated ${summary.updated ?? 0} | floor ${summary.floor ?? 0} | paused ${summary.paused ?? 0}`,
+    `no data ${summary.noData ?? 0} | unchanged ${summary.unchanged ?? 0} | errors ${summary.errors ?? 0}`,
+    `avg margin ${(summary.avgMargin ?? 0).toFixed(1)}%`,
+  ].join('\n');
+}
+
+export async function sendTelegram({ config, logger, text }) {
   if (!telegramConfigured(config)) return false;
 
   const telegram = config.notifications.telegram;
-  const text = formatSyncSummary({ reason, results, error, catalog });
 
   try {
     const response = await fetch(`https://api.telegram.org/bot${telegram.token}/sendMessage`, {
@@ -46,7 +54,7 @@ export async function notifySync({ config, logger, reason, results = [], error =
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         chat_id: telegram.chatId,
-        text: text.slice(0, 3800),
+        text: String(text).slice(0, 3800),
         disable_web_page_preview: true,
       }),
       signal: AbortSignal.timeout(10_000),
@@ -55,10 +63,15 @@ export async function notifySync({ config, logger, reason, results = [], error =
       logger?.warn('telegram notification rejected', { status: response.status });
       return false;
     }
-    logger?.info('telegram notification sent', { reason });
+    logger?.info('telegram notification sent');
     return true;
   } catch (notifyError) {
     logger?.warn('telegram notification failed', { error: notifyError.message });
     return false;
   }
+}
+
+export async function notifySync({ config, logger, reason, results = [], error = null, catalog = null } = {}) {
+  const text = formatSyncSummary({ reason, results, error, catalog });
+  return sendTelegram({ config, logger, text });
 }

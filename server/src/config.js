@@ -34,6 +34,25 @@ export const config = {
     // "x9" = round up so the price always ends with 9 (1499, 349, 99...)
     rounding: process.env.PRICE_ROUNDING ?? 'x9',
     minMarginPercent: float(process.env.MIN_MARGIN_PERCENT, 5),
+
+    dynamic: {
+      enabled: bool(process.env.DYNAMIC_PRICING_ENABLED, false),
+      dryRun: bool(process.env.PRICING_DRY_RUN, true),
+      floorMarginPercent: float(process.env.DYNAMIC_FLOOR_MARGIN_PERCENT, 15),
+      undercutPercent: float(process.env.DYNAMIC_UNDERCUT_PERCENT, 2),
+      maxMarginPercent: float(process.env.DYNAMIC_MAX_MARGIN_PERCENT, 50),
+      maxDailyChangePercent: float(process.env.DYNAMIC_MAX_DAILY_CHANGE_PERCENT, 30),
+      intervalMinutes: int(process.env.DYNAMIC_PRICING_INTERVAL_MINUTES, 1440),
+      maxProductsPerRun: int(process.env.DYNAMIC_PRICING_MAX_PRODUCTS, 300),
+      requestDelayMs: int(process.env.DYNAMIC_PRICING_DELAY_MS, 400),
+      pauseDays: int(process.env.DYNAMIC_PRICING_PAUSE_DAYS, 7),
+      timeoutMs: int(process.env.DYNAMIC_PRICING_TIMEOUT_MS, 20000),
+      minMatchScore: float(process.env.DYNAMIC_PRICING_MIN_MATCH_SCORE, 0.5),
+      sources: (process.env.DYNAMIC_PRICING_SOURCES ?? 'prom,hotline')
+        .split(',')
+        .map((value) => value.trim())
+        .filter(Boolean),
+    },
   },
 
   sync: {
@@ -131,6 +150,13 @@ export const config = {
 
   // Bearer token that protects the analytics summary.
   adminToken: process.env.ADMIN_TOKEN ?? '',
+
+  // Daily register of Dropt margins that should be paid out (no API on their side).
+  payouts: {
+    enabled: bool(process.env.PAYOUT_REPORT_ENABLED, true),
+    holdDays: int(process.env.DROPT_PAYOUT_HOLD_DAYS, 14),
+    intervalMinutes: int(process.env.PAYOUT_REPORT_INTERVAL_MINUTES, 1440),
+  },
 
   // Optional Telegram notifications for the supplier sync.
   notifications: {
