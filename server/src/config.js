@@ -83,6 +83,9 @@ export const config = {
       // Public WooCommerce Store API — verified live, ~6400 SKU.
       endpoint: '/wp-json/wc/store/v1/products',
       marginPercent: float(process.env.AVEPTO_MARGIN_PERCENT, NaN),
+      botToken: process.env.TELEGRAM_BOT_TOKEN ?? '',
+      managerChatId: process.env.AVEPTO_MANAGER_CHAT_ID ?? '',
+      ownerChatId: process.env.TELEGRAM_CHAT_ID ?? '',
       // api = WooCommerce Store API (default), xml = YML/XML price list.
       source: (process.env.AVEPTO_SOURCE ?? 'api').toLowerCase(),
       xmlUrl: process.env.AVEPTO_XML_URL ?? '',

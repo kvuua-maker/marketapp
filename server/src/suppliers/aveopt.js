@@ -112,8 +112,26 @@ export class AveoptAdapter extends SupplierAdapter {
     return item.is_in_stock ? (item.low_stock_remaining ?? 1) : 0;
   }
 
-  async placeOrder() {
-    const error = new Error('Aveopt public API does not accept orders; using email fallback');
+  async placeOrder({ order, customer, items }) {
+    const chatId = this.config.managerChatId || this.config.ownerChatId;
+    if (this.config.botToken && chatId) {
+      const { formatSupplierOrder, sendOrderToChat } = await import('../services/telegramOrders.js');
+      const toManager = Boolean(this.config.managerChatId);
+      const text = formatSupplierOrder({
+        supplierName: 'Aveopt',
+        order,
+        customer,
+        items,
+        note: toManager
+          ? 'Просимо підтвердити та надіслати ТТН.'
+          : 'Менеджер Aveopt ще не підключений до бота — перешліть це замовлення вручну.',
+      });
+      const result = await sendOrderToChat({ botToken: this.config.botToken, chatId, text, logger: this.logger });
+      return toManager
+        ? { status: 'sent', ref: `tg:${result.messageId}` }
+        : { status: 'queued', ref: `tg-owner:${result.messageId}` };
+    }
+    const error = new Error('Aveopt: Telegram is not configured; using email fallback');
     error.code = 'order_api_unsupported';
     throw error;
   }

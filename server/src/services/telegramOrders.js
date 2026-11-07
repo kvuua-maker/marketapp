@@ -64,3 +64,39 @@ export async function sendDroptOrderToManager({ botToken, chatId, order, custome
   logger?.info('dropt order sent to manager via Telegram', { orderId: order.id, chatId });
   return { messageId: data?.result?.message_id ?? null };
 }
+
+/** Generic supplier order text (Aveopt and others). */
+export function formatSupplierOrder({ supplierName, order, customer, items, totalCents, note = '' }) {
+  const total = totalCents ?? items.reduce((sum, item) => sum + item.unitPriceCents * item.qty, 0);
+  const lines = [
+    `🛒 Нове замовлення MarketApp — ${supplierName}`,
+    `№ ${order.id}`,
+    '',
+    `Покупець: ${customer.fullName}`,
+    `Телефон: ${customer.phone}`,
+    `Доставка: Нова Пошта, ${customer.city}, ${customer.branch}`,
+    'Оплата: накладений платіж (післяплата)',
+    '',
+    'Товари:',
+    ...items.map((item) => `• ${item.title} — ${item.qty} шт × ${uah(item.unitPriceCents)} = ${uah(item.unitPriceCents * item.qty)}`),
+    '',
+    `Разом: ${uah(total)}`,
+  ];
+  if (customer.comment) lines.push('', `Коментар: ${customer.comment}`);
+  if (note) lines.push('', note);
+  return lines.join('\n').slice(0, 3800);
+}
+
+export async function sendOrderToChat({ botToken, chatId, text, logger }) {
+  if (!botToken || !chatId) throw new Error('Telegram chat is not configured');
+  const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ chat_id: chatId, text, disable_web_page_preview: true }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || data?.ok === false) throw new Error(`Telegram rejected: ${data?.description ?? response.status}`);
+  logger?.info('order sent to Telegram chat', { chatId, messageId: data?.result?.message_id });
+  return { messageId: data?.result?.message_id ?? null };
+}
