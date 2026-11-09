@@ -279,6 +279,7 @@ export function createAppServer({ db, adapters, ai, config, logger, syncTrigger 
     senderPhone: config.delivery.novaPoshtaPhone,
     senderCityRef: config.delivery.novaPoshtaCity,
     senderWarehouseRef: config.delivery.novaPoshtaWarehouse,
+    cod: config.delivery.novaPoshtaCod,
     logger: logger.child({ service: 'nova-poshta' }),
   });
 

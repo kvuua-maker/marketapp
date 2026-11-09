@@ -3,13 +3,50 @@
  * Fully inert unless NOVA_POSHTA_API_KEY and the sender references are set,
  * so the order flow never blocks on logistics.
  */
+/**
+ * Pure payload builder (unit-tested): COD is sent as BackwardDeliveryData so
+ * Nova Poshta collects the goods amount from the recipient and pays it to the
+ * sender's NP account.
+ */
+export function buildWaybillPayload({
+  order, customer, totalCents, weight, cityRef, warehouseRef,
+  sender, cod = true,
+}) {
+  const amount = (totalCents / 100).toFixed(2);
+  return {
+    PayerType: 'Recipient',
+    PaymentMethod: 'Cash',
+    DateTime: new Date().toLocaleDateString('uk-UA'),
+    CargoType: 'Parcel',
+    Weight: String(weight),
+    ServiceType: 'WarehouseWarehouse',
+    SeatsAmount: '1',
+    Description: `Замовлення ${order.id}`,
+    Cost: String(Math.round(totalCents / 100)),
+    CitySender: sender.cityRef,
+    Sender: sender.ref,
+    SenderAddress: sender.warehouseRef ?? '',
+    ContactSender: sender.contactRef,
+    SendersPhone: sender.phone,
+    CityRecipient: cityRef,
+    RecipientAddress: warehouseRef,
+    RecipientName: customer.fullName,
+    RecipientsPhone: customer.phone,
+    NewAddress: '1',
+    ...(cod
+      ? { BackwardDeliveryData: [{ PayerType: 'Recipient', CargoType: 'Money', RedeliveryString: amount }] }
+      : {}),
+  };
+}
+
 export class NovaPoshtaService {
-  constructor({ apiKey, senderRef, senderContactRef, senderPhone, senderCityRef, senderWarehouseRef, logger }) {
+  constructor({ apiKey, senderRef, senderContactRef, senderPhone, senderCityRef, senderWarehouseRef, cod = true, logger }) {
     this.apiKey = apiKey ?? '';
     this.senderRef = senderRef ?? '';
     this.senderContactRef = senderContactRef ?? '';
     this.senderPhone = senderPhone ?? '';
     this.senderCityRef = senderCityRef ?? '';
+    this.cod = cod !== false;
     this.logger = logger;
     this.endpoint = 'https://api.novaposhta.ua/v2.0/json/';
   }
@@ -78,27 +115,22 @@ export class NovaPoshtaService {
     if (!warehouseRef) throw new Error(`NP: warehouse not found: ${customer.branch}`);
 
     const weight = Math.max(0.5, items.reduce((sum, item) => sum + item.qty, 0) * 0.4);
-    const data = await this.call('InternetDocument', 'save', {
-      PayerType: 'Recipient',
-      PaymentMethod: 'Cash',
-      DateTime: new Date().toLocaleDateString('uk-UA'),
-      CargoType: 'Parcel',
-      Weight: String(weight),
-      ServiceType: 'WarehouseWarehouse',
-      SeatsAmount: '1',
-      Description: `Замовлення ${order.id}`,
-      Cost: String(Math.round(totalCents / 100)),
-      CitySender: this.senderCityRef,
-      Sender: this.senderRef,
-      SenderAddress: this.senderWarehouseRef ?? '',
-      ContactSender: this.senderContactRef,
-      SendersPhone: this.senderPhone,
-      CityRecipient: cityRef,
-      RecipientAddress: warehouseRef,
-      RecipientName: customer.fullName,
-      RecipientsPhone: customer.phone,
-      NewAddress: '1',
-    });
+    const data = await this.call('InternetDocument', 'save', buildWaybillPayload({
+      order,
+      customer,
+      totalCents,
+      weight,
+      cityRef,
+      warehouseRef,
+      cod: this.cod,
+      sender: {
+        ref: this.senderRef,
+        contactRef: this.senderContactRef,
+        phone: this.senderPhone,
+        cityRef: this.senderCityRef,
+        warehouseRef: this.senderWarehouseRef,
+      },
+    }));
 
     const ttn = data?.[0]?.IntDocNumber ?? null;
     if (!ttn) return null;

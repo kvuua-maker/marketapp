@@ -170,6 +170,7 @@ export const config = {
     novaPoshtaPhone: process.env.NOVA_POSHTA_PHONE ?? '',
     novaPoshtaCity: process.env.NOVA_POSHTA_CITY ?? '',
     novaPoshtaWarehouse: process.env.NOVA_POSHTA_WAREHOUSE ?? '',
+    novaPoshtaCod: bool(process.env.NOVA_POSHTA_COD, true),
   },
 
   // Optional token for automation endpoints (CI smoke tests, external schedulers).
