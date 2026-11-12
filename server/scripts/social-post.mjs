@@ -33,7 +33,9 @@ console.log('--- POST ---');
 console.log(text);
 console.log('-----------');
 
-if (publish === 'telegram' || publish === 'both') {
+if ((publish === 'telegram' || publish === 'both') && !config.notifications.telegram.social) {
+  console.log('telegram publishing disabled (TELEGRAM_SOCIAL_NOTIFICATIONS=false) — post saved to queue only');
+} else if (publish === 'telegram' || publish === 'both') {
   const token = config.notifications.telegram.token;
   const chatId = process.env.TELEGRAM_CHANNEL_ID || config.notifications.telegram.chatId;
   if (!token || !chatId) { console.error('telegram not configured'); process.exit(2); }

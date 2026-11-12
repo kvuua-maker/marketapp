@@ -72,6 +72,16 @@ export async function sendTelegram({ config, logger, text }) {
 }
 
 export async function notifySync({ config, logger, reason, results = [], error = null, catalog = null } = {}) {
+  const telegram = config?.notifications?.telegram ?? {};
+  const isError = Boolean(error);
+  if (isError && !telegram.critical) {
+    logger?.info('telegram critical alert suppressed', { reason });
+    return false;
+  }
+  if (!isError && !telegram.sync) {
+    logger?.info('telegram sync report suppressed (TELEGRAM_SYNC_NOTIFICATIONS=false)', { reason });
+    return false;
+  }
   const text = formatSyncSummary({ reason, results, error, catalog });
   return sendTelegram({ config, logger, text });
 }

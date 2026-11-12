@@ -206,6 +206,9 @@ export const config = {
     telegram: {
       token: process.env.TELEGRAM_BOT_TOKEN ?? '',
       chatId: process.env.TELEGRAM_CHAT_ID ?? '',
+      sync: bool(process.env.TELEGRAM_SYNC_NOTIFICATIONS, true),
+      critical: bool(process.env.TELEGRAM_CRITICAL_NOTIFICATIONS, true),
+      social: bool(process.env.TELEGRAM_SOCIAL_NOTIFICATIONS, true),
     },
   },
 

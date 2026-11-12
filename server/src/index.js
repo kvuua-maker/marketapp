@@ -167,7 +167,9 @@ async function main() {
         runNow: async () => {
           const report = buildDroptPayoutReport(db, { holdDays: config.payouts.holdDays });
           logger.info('dropt payout report', report.totals);
-          await sendTelegram({ config, logger, text: formatPayoutReport(report) });
+          if (config.notifications.telegram.sync) {
+            await sendTelegram({ config, logger, text: formatPayoutReport(report) });
+          }
           return report.totals;
         },
       })
