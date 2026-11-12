@@ -918,6 +918,12 @@ export function createAppServer({ db, adapters, ai, config, logger, syncTrigger 
       }
 
       if (req.method === 'POST' && path === '/v1/orders') {
+        if (config.orders.paused) {
+          throw new AppError('Прийом замовлень тимчасово припинено. Спробуйте пізніше.', {
+            code: 'orders_paused',
+            status: 503,
+          });
+        }
         rateLimit(`orders:${clientKey(req)}`, 10, 3_600_000);
         const payload = await readJsonBody(req);
         const token = clientTokenFrom(req);
